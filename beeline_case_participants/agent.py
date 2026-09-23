@@ -217,8 +217,19 @@ class Agent:
 
     def _fallback(self, env, arms):
         tried = [(a["mu"] - LCB_K * math.sqrt(a["var"]), k) for k, a in arms.items() if a["n"]]
-        if not tried or max(tried)[0] <= 0:
-            return []
-        cur, seg, target = max(tried)[1]
-        return [{"campaign_name": "fallback", "filter_arpu_segment": seg,
-                 "filter_current_tariff": cur, "target_tariff": target, "channel": "sms"}]
+        if tried and max(tried)[0] > 0:
+            cur, seg, target = max(tried)[1]
+            return [{"campaign_name": "fallback", "filter_arpu_segment": seg,
+                     "filter_current_tariff": cur, "target_tariff": target, "channel": "sms"}]
+        # ТЗ требует ≥1 кампании. ponytail: бесплатный push на наименее убыточную ячейку,
+        # худший случай — потеря |mu|·0.5·S одной ячейки
+        p = env.customer_profile
+        S = p.groupby(["current_tariff", "arpu_segment"])["predicted_arpu"].sum()
+        pool = {k: a for k, a in arms.items() if a["n"]} or arms
+        if pool:
+            cur, seg, target = max(pool, key=lambda k: pool[k]["mu"] * S.get(k[:2], 0.0))
+        else:  # arms пусты (сбой до гипотез): самая маленькая по ARPU ячейка, любой другой тариф
+            cur, seg = S.idxmin()
+            target = next(t for t in env.tariffs["tariff_plan_code"] if t != cur)
+        return [{"campaign_name": "fallback_push", "filter_arpu_segment": seg,
+                 "filter_current_tariff": cur, "target_tariff": target, "channel": "push"}]

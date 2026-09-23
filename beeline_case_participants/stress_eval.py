@@ -64,7 +64,23 @@ def run(agent_cls, model, seed):
                            _mock_fallback)["net_arpu_gain"]
 
 
+def check_never_empty():
+    """Нет data/ и всё убыточно: агент всё равно обязан вернуть ≥1 валидную кампанию (must-have ТЗ)."""
+    orig, agent._history = agent._history, lambda *a: pd.read_csv("нет_такого_файла.csv")
+    m = _mock_impact_model(history)
+    m["arpu_change_pct"] = -0.5
+    env, _ = make_environment(profile, m, dict_tariff, CHANNELS, TOTAL_BUDGET, MAX_TOTAL_CONTACTS,
+                              lambda *a: (-0.5, 0.1), seed=0)
+    try:
+        camps = sanitize_campaigns(agent.Agent().act(env), env.tariffs)
+    finally:
+        agent._history = orig
+    assert 1 <= len(camps) <= 10, camps
+    print(f"пессимистичный мир: {len(camps)} кампания(й), каналы {[c['channel'] for c in camps]}")
+
+
 if __name__ == "__main__":
+    check_never_empty()
     runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 10
     rows = []
     for seed in range(runs):
