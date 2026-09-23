@@ -18,7 +18,7 @@ export default function Versions({ s }: { s: LabState }) {
         <b>Версия</b> — набор разрешённых настроек поверх <code>agent.py</code>: константы, флаги эвристик и дополнение к промпту.
         Каждая версия проходит одну и ту же <b>матрицу тестов</b>. Авто-патч получает статус <b>candidate</b>, только если прошёл gate
         против родителя: must-have тесты пройдены, медиана в <b>жёстких мирах</b> (история бесполезна, как на судействе) не упала,
-        в стресс-мирах и мирах keep 0.5 упала не больше чем на 3%, прогонов в минусе не больше. <b>Promote</b> записывает
+        в стресс-мирах и мирах keep 0.5 упала не больше чем на 3%, худший из жёстких миров не стал хуже. <b>Promote</b> записывает
         настройки в <code>agent.py</code> и пересобирает <code>submission.csv</code>.
       </HowTo>
       {s.error && <Alert status="danger"><Alert.Content><Alert.Title>Лаборатория</Alert.Title><Alert.Description>{s.error}</Alert.Description></Alert.Content></Alert>}

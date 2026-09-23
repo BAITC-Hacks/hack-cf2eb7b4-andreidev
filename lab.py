@@ -65,6 +65,7 @@ WORLDS = {"harsh_0": ("harsh0", "жёсткие миры, история бес�
           "harsh_50": ("harsh50", "жёсткие миры, история наполовину верна"),
           "stress_10": ("stress", "стресс-миры")}
 PRIMARY = "harsh0"
+WORLDS_BY_KEY = {key: label for key, label in WORLDS.values()}
 
 
 def validate(changes, base=None):
@@ -537,7 +538,8 @@ REMEDIATION_INSTRUCTION = (
     "с доказательствами, metrics — сводные метрики тестов, targets — разрешённые настройки (текущее значение, границы), "
     "templates — готовые безопасные патчи. Выбери ОДНО небольшое изменение (1–2 настройки), которое скорее всего "
     "исправит самую важную проблему. Главный критерий приёмки — медиана harsh0 (миры, где история бесполезна, "
-    "как на судействе) не должна упасть; stress и harsh50 — не больше чем на 3%. Менять можно только ключи из targets. "
+    "как на судействе) не должна упасть, худший мир harsh0 (harsh0_min) не должен стать хуже; stress и harsh50 — "
+    "не больше чем на 3%. Менять можно только ключи из targets. "
     'Ответ строго JSON: {"template": "id или null", "changes": {"KEY": value}, "hypothesis": "...", "expected_benefit": "..."}'
 )
 
@@ -557,7 +559,7 @@ def propose(parent):
         m = parent["metrics"]
         ctx = {
             "issues": [{"code": i["code"], "severity": i["severity"], "evidence": i["evidence"]} for i in issues],
-            "metrics": {"harsh0_median": m.get("harsh0", {}).get("median"), "harsh50_median": m.get("harsh50", {}).get("median"),
+            "metrics": {"harsh0_median": m.get("harsh0", {}).get("median"), "harsh0_min": m.get("harsh0", {}).get("min"), "harsh50_median": m.get("harsh50", {}).get("median"),
                         "stress_median": m["stress"].get("median"), "stress_min": m["stress"].get("min"),
                         "negative_runs": m["negative_runs"], "pilot_hit_rate": m["pilot_hit_rate"], "diversity": m["diversity"]},
             "targets": {k: {"value": parent["config"][k], "min": t_.get("min"), "max": t_.get("max"), "choices": t_.get("choices"),
@@ -604,8 +606,10 @@ def gate(v, parent):
             tol = 0.0 if key == PRIMARY else TH["gate_tol"]  # главное семейство — без допуска, остальные ±шум
             if b < a - tol * abs(a):
                 reasons.append(f"медиана «{label}» упала: {_m(a)} → {_m(b)}" + (f" (допуск {tol:.0%})" if tol else ""))
-        if m["negative_runs"] > pm["negative_runs"]:
-            reasons.append(f"прогонов в минусе больше: {pm['negative_runs']} → {m['negative_runs']}")
+        # худший мир, а не число миров в минусе: счётчик на границе нуля — монетка
+        # (адаптивные пилоты: медиана +70%, худший мир −2.85M → −0.99M, но «в минусе» 1 → 2)
+        if PRIMARY in pm and PRIMARY in m and m[PRIMARY]["min"] < pm[PRIMARY]["min"]:
+            reasons.append(f"худший мир «{WORLDS_BY_KEY[PRIMARY]}» стал хуже: {_m(pm[PRIMARY]['min'])} → {_m(m[PRIMARY]['min'])}")
     return {"passed": not reasons, "reasons": reasons, "vs": parent["id"] if parent and parent.get("metrics") else None}
 
 
@@ -711,14 +715,14 @@ if __name__ == "__main__":
             "LOW_POSTERIOR_CONFIDENCE", "FALLBACK_TRIGGERED", "NO_DIVERSITY_IN_CAMPAIGNS"} <= codes, codes
     # gate
     t_ok = [{"name": n, "must": True, "passed": True} for n in MUST]
-    mk = lambda h0, h50, st, neg=0: {"harsh0": {"median": h0}, "harsh50": {"median": h50}, "stress": {"median": st},  # noqa: E731
-                                     "negative_runs": neg, "invalid": 0}
+    mk = lambda h0, h50, st, lo=1.0: {"harsh0": {"median": h0, "min": lo}, "harsh50": {"median": h50}, "stress": {"median": st},  # noqa: E731
+                                      "invalid": 0}
     base = {"id": "p", "metrics": mk(5.0, 6.0, 7.0)}
     # в жёстких лучше, в стресс-мирах −2% (в пределах допуска) — проходит
     assert gate({"tests": t_ok, "metrics": mk(5.5, 6.0, 6.86)}, base)["passed"]
     # главное семейство без допуска: −1% в harsh0 — отказ
     assert not gate({"tests": t_ok, "metrics": mk(4.95, 6.0, 7.0)}, base)["passed"]
-    g = gate({"tests": t_ok[:-1] + [{**t_ok[-1], "passed": False}], "metrics": mk(5.0, 6.0, 6.0, neg=1)}, base)
+    g = gate({"tests": t_ok[:-1] + [{**t_ok[-1], "passed": False}], "metrics": mk(5.0, 6.0, 6.0, lo=0.5)}, base)
     assert not g["passed"] and len(g["reasons"]) == 3, g
     assert "перепрогони" in gate({"tests": t_ok, "metrics": mk(5, 6, 7)}, {"id": "old", "metrics": {"stress": {"median": 7}, "negative_runs": 0}})["reasons"][0]
     # быстрая матрица на baseline + один шаг ремедиации (без LLM)
