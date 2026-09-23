@@ -1,4 +1,4 @@
-import { Button, Card, Chip, Meter, Table, Tooltip } from '@heroui/react'
+import { Button, Card, Chip, ListBox, Meter, Select, Table, Tooltip } from '@heroui/react'
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, Bell, Brain, CircleCheck, Database, CircleDashed, CircleSlash, CircleX, History, Info,
   LoaderCircle, Megaphone, MessageSquare, Pause, Phone, Rocket, TrendingUp, type LucideIcon,
@@ -6,6 +6,25 @@ import {
 import { useMemo, useState, type ReactNode } from 'react'
 import type { SortDescriptor } from 'react-aria-components'
 import type { Arm, Issue, VersionStatus } from './api'
+
+// ---------- выбор из списка ----------
+/** HeroUI Select вместо нативного <select>: options — [значение, подпись] */
+export function Picker({ label, value, onChange, options, className }: {
+  label: string; value: string; onChange: (v: string) => void; options: [string, ReactNode][]; className?: string
+}) {
+  return (
+    <Select aria-label={label} value={value} onChange={(k) => k != null && onChange(String(k))} className={className}>
+      <Select.Trigger><Select.Value /><Select.Indicator /></Select.Trigger>
+      <Select.Popover>
+        <ListBox>
+          {options.map(([v, l]) => (
+            <ListBox.Item key={v} id={v} textValue={typeof l === 'string' ? l : v}>{l}<ListBox.ItemIndicator /></ListBox.Item>
+          ))}
+        </ListBox>
+      </Select.Popover>
+    </Select>
+  )
+}
 
 // ---------- форматирование ----------
 export const fmt = (x: number | null | undefined, d = 0) =>

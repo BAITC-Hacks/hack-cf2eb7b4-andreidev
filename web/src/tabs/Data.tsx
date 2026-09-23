@@ -2,7 +2,7 @@ import { Alert, Button, Chip } from '@heroui/react'
 import { Database, FileUp } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { fetchData, uploadData, type DataKind, type DataSummary, type Role } from '../api'
-import { DataTable, HowTo, Section, fmt } from '../ui'
+import { DataTable, HowTo, Picker, Section, fmt } from '../ui'
 
 const KIND: Record<DataKind, { label: string; hint: string; admin?: boolean }> = {
   campaign_results: { label: 'Итоги кампаний', hint: 'cur, seg, target, channel, n, lift_ratio (+ world, source) → база знаний' },
@@ -47,10 +47,8 @@ export default function Data({ role, onChanged }: { role: Role; onChanged: () =>
 
       <Section icon={FileUp} title="Загрузить CSV" desc={KIND[kind].hint}>
         <div className="flex flex-wrap items-center gap-2">
-          <select aria-label="Что загружаем" value={kind} onChange={(e) => setKind(e.target.value as DataKind)}
-            className="h-10 rounded-xl bg-default px-3 text-sm outline-none focus-visible:outline-2 focus-visible:outline-focus">
-            {kinds.map((k) => <option key={k} value={k}>{KIND[k].label}</option>)}
-          </select>
+          <Picker label="Что загружаем" value={kind} onChange={(v) => setKind(v as DataKind)} className="w-56"
+            options={kinds.map((k) => [k, KIND[k].label])} />
           <input type="file" accept=".csv,text/csv" aria-label="CSV-файл" onChange={(e) => setFile(e.target.files?.[0])}
             className="text-sm file:mr-3 file:h-10 file:cursor-pointer file:rounded-xl file:border-0 file:bg-default file:px-3 file:text-sm" />
           <Button variant="primary" isDisabled={!file} isPending={busy} onPress={upload} className="h-10">Загрузить</Button>

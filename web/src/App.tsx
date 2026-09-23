@@ -211,17 +211,19 @@ function Controls({ params, setParams, loading, llmAvailable, models, defaultMod
       </ToggleButtonGroup>
       <Tip tip={llmAvailable ? 'Добавить гипотезы от языковой модели. В LLM уходят только агрегаты по ячейкам' : 'Ключ LLM не задан на сервере — агент работает на истории'}>
       <Switch isSelected={params.llm && llmAvailable} isDisabled={!llmAvailable}
-        onChange={(llm) => setParams({ ...params, llm })}
-        className="flex h-10 cursor-pointer flex-row items-center gap-2 rounded-xl bg-default px-3">
-        <Switch.Control><Switch.Thumb /></Switch.Control>
-        <span className="text-sm font-medium whitespace-nowrap">LLM-эксперт</span>
+        onChange={(llm) => setParams({ ...params, llm })}>
+        <Switch.Content className="flex h-10 cursor-pointer flex-row items-center gap-2 rounded-xl bg-default px-3">
+          <Switch.Control><Switch.Thumb /></Switch.Control>
+          <span className="text-sm font-medium whitespace-nowrap">LLM-эксперт</span>
+        </Switch.Content>
       </Switch>
       </Tip>
       <Tip tip="Стартовать с прошлых пилотов и итогов кампаний этого мира (вкладка «Данные»). Выключите, чтобы увидеть агента с нуля">
-      <Switch isSelected={params.feedback} onChange={(feedback) => setParams({ ...params, feedback })}
-        className="flex h-10 cursor-pointer flex-row items-center gap-2 rounded-xl bg-default px-3">
-        <Switch.Control><Switch.Thumb /></Switch.Control>
-        <span className="text-sm font-medium whitespace-nowrap">База знаний</span>
+      <Switch isSelected={params.feedback} onChange={(feedback) => setParams({ ...params, feedback })}>
+        <Switch.Content className="flex h-10 cursor-pointer flex-row items-center gap-2 rounded-xl bg-default px-3">
+          <Switch.Control><Switch.Thumb /></Switch.Control>
+          <span className="text-sm font-medium whitespace-nowrap">База знаний</span>
+        </Switch.Content>
       </Switch>
       </Tip>
       {/* ponytail: нативный datalist — пресеты первыми, любой slug OpenRouter вписывается руками */}

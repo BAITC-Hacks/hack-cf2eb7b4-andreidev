@@ -2,7 +2,7 @@ import { ToggleButton, ToggleButtonGroup } from '@heroui/react'
 import { History } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { lab, type LabRun } from '../api'
-import { DataTable, HowTo, Section, TestChip, fmt, money } from '../ui'
+import { DataTable, HowTo, Picker, Section, TestChip, fmt, money } from '../ui'
 import type { LabState } from './useLab'
 
 type Row = { version: string } & LabRun
@@ -28,11 +28,8 @@ export default function Runs({ s }: { s: LabState }) {
       <Section icon={History} title={`Прогоны · ${shown.length}`} desc={`со сбоем: ${failed}`}
         action={
           <div className="flex flex-wrap items-center gap-2">
-            <select value={ver} onChange={(e) => setVer(e.target.value)} aria-label="Версия"
-              className="h-8 rounded-lg border border-border bg-surface px-2 text-sm">
-              <option value="all">все версии</option>
-              {s.versions.map((v) => <option key={v.id} value={v.id}>{v.id}</option>)}
-            </select>
+            <Picker label="Версия" value={ver} onChange={setVer} className="w-40"
+              options={[['all', 'все версии'], ...s.versions.map((v): [string, string] => [v.id, v.id])]} />
             <ToggleButtonGroup aria-label="Тест" selectionMode="multiple" size="sm" selectedKeys={tests}
               onSelectionChange={(k) => setTests(new Set(k as Set<string>))}>
               {TESTS.map((t) => <ToggleButton key={t} id={t}>{t}</ToggleButton>)}

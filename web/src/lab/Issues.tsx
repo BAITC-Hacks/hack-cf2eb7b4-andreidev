@@ -2,7 +2,7 @@ import { Button, Card, Chip } from '@heroui/react'
 import { Bug, CircleCheck, Wand2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { lab, type Targets } from '../api'
-import { HowTo, SeverityChip, Tip, VersionStatusChip } from '../ui'
+import { HowTo, Picker, SeverityChip, Tip, VersionStatusChip } from '../ui'
 import type { LabState } from './useLab'
 
 export default function Issues({ s }: { s: LabState }) {
@@ -22,10 +22,8 @@ export default function Issues({ s }: { s: LabState }) {
       </HowTo>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm text-muted">Версия:</span>
-        <select value={v?.id} onChange={(e) => s.setSel(e.target.value)} aria-label="Версия"
-          className="num h-9 rounded-lg border border-border bg-surface px-2.5 text-sm">
-          {s.versions.map((x) => <option key={x.id} value={x.id}>{x.id} · {x.status}</option>)}
-        </select>
+        <Picker label="Версия" value={v?.id ?? ''} onChange={s.setSel} className="w-56"
+          options={s.versions.map((x) => [x.id, `${x.id} · ${x.status}`])} />
         {v && <VersionStatusChip s={v.status} />}
         {v && v.issues.length > 0 && (
           <Tip tip="LLM или шаблон превратит эти issues в патч; новая версия пройдёт матрицу и gate">

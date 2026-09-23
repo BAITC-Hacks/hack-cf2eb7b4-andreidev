@@ -3,7 +3,7 @@ import { FlaskConical, GitBranch, Play, Rocket, SlidersHorizontal, Sparkles, Wan
 import { useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { lab, type Target, type Targets, type Test, type Version, type VersionStatus } from '../api'
-import { DataTable, DiffLine, HowTo, Section, TestChip, Tip, VersionStatusChip, fmt, money } from '../ui'
+import { DataTable, DiffLine, HowTo, Picker, Section, TestChip, Tip, VersionStatusChip, fmt, money } from '../ui'
 import { FAMILIES, worldNets, useVersion, type Family, type LabState } from './useLab'
 
 const STATUSES: VersionStatus[] = ['draft', 'evaluating', 'candidate', 'failed', 'promoted']
@@ -251,11 +251,9 @@ function NewVersion({ parent, s }: { parent: Version; s: LabState }) {
                     {t.min != null && <span className="num text-xs text-muted">{t.min}…{t.max}</span>}
                   </span>
                   {t.type === 'bool' ? (
-                    <Switch isSelected={Boolean(cur)} onChange={set} aria-label={k}><Switch.Control><Switch.Thumb /></Switch.Control></Switch>
+                    <Switch isSelected={Boolean(cur)} onChange={set}><Switch.Content aria-label={k}><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content></Switch>
                   ) : t.type === 'choice' ? (
-                    <select value={String(cur)} onChange={(e) => set(e.target.value)} className={FIELD}>
-                      {t.choices!.map((c) => <option key={c}>{c}</option>)}
-                    </select>
+                    <Picker label={k} value={String(cur)} onChange={set} options={t.choices!.map((c) => [c, c])} />
                   ) : t.type === 'str' ? (
                     <textarea value={String(cur)} maxLength={t.max_len} onChange={(e) => set(e.target.value)} rows={2} className={`${FIELD} h-auto py-2`} />
                   ) : (
