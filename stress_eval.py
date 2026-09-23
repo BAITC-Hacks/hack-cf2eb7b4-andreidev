@@ -3,6 +3,7 @@
 
     python stress_eval.py [--runs 10]
     python stress_eval.py --keep 0    # жёсткие миры: история бесполезна (0) или наполовину верна (0.5)
+    python stress_eval.py --struct    # структурные миры: сдвиг эффекта общий на target и сегмент
 
 Сравнивает наш агент с шаблоном, prior-only (без пилотов), оракулом (знает эффекты)
 и ablation экспертов: только prior против full (prior + llm, если есть OPENROUTER_API_KEY или OPENAI_API_KEY).
@@ -47,6 +48,23 @@ def harsh_world(seed, keep=0.0):
     shuffled = rng.permutation(m["arpu_change_pct"].values)
     m["arpu_change_pct"] = (keep * m["arpu_change_pct"] + (1 - keep) * shuffled
                             + rng.normal(0, 0.1, len(m))).clip(-1, 3)
+    return m
+
+
+def struct_world(seed, sd=0.2):
+    """
+    Структурный мир: история ошибается не по каждому переходу отдельно, а системно —
+    общий сдвиг на target и на сегмент (например, tariff_8 на судействе привлекательнее).
+    В world()/harsh_world() искажения независимы, и перенос знания между рукавами там бесполезен по построению.
+    """
+    rng = np.random.default_rng(3000 + seed)
+    m = _mock_impact_model(history)
+    t_shift = dict(zip(dict_tariff["tariff_plan_code"], rng.normal(0, sd, len(dict_tariff))))
+    s_shift = dict(zip(["LOW", "MID", "HIGH"], rng.normal(0, sd / 2, 3)))
+    m["arpu_change_pct"] = (m["arpu_change_pct"] * rng.uniform(0.75, 1.5, len(m))
+                            + m["tariff_plan_code_to"].map(t_shift).fillna(0)
+                            + m["arpu_segment"].astype(str).map(s_shift).fillna(0)
+                            + rng.normal(0, 0.15, len(m))).clip(-1, 3)
     return m
 
 
@@ -105,6 +123,21 @@ def check_never_empty():
     print(f"пессимистичный мир: {len(camps)} кампания(й), каналы {[c['channel'] for c in camps]}")
 
 
+def check_time_limit():
+    """Дедлайн уже прошёл: LLM и пилоты пропущены, план всё равно валиден."""
+    orig, agent.TIME_LIMIT = agent.TIME_LIMIT, 0
+    env, _ = make_environment(profile, _mock_impact_model(history), dict_tariff, CHANNELS, TOTAL_BUDGET,
+                              MAX_TOTAL_CONTACTS, _mock_fallback, seed=0)
+    try:
+        a = agent.Agent()
+        camps = sanitize_campaigns(a.act(env), env.tariffs)
+    finally:
+        agent.TIME_LIMIT = orig
+    assert 1 <= len(camps) <= 10 and not any(l.startswith("pilot ") for l in a.log), a.log
+    assert "llm skipped: time limit" in a.log and "explore stopped: time limit" in a.log, a.log
+    print(f"дедлайн: 0 пилотов, {len(camps)} кампания(й)")
+
+
 def check_llm():
     """LLM-эксперт: невалидные предложения отсеиваются, сбой API не ломает агента."""
     env, _ = make_environment(profile, _mock_impact_model(history), dict_tariff, CHANNELS, TOTAL_BUDGET,
@@ -161,6 +194,7 @@ def check_llm():
 
 if __name__ == "__main__":
     check_never_empty()
+    check_time_limit()
     check_llm()
     if not agent.llm_config()[1]:
         print("нет LLM-ключа: agent (full) = exp_prior")
@@ -170,7 +204,8 @@ if __name__ == "__main__":
     keep = float(sys.argv[sys.argv.index("--keep") + 1]) if "--keep" in sys.argv else None  # жёсткие миры
     rows = []
     for seed in range(runs):
-        model = world(seed) if keep is None else harsh_world(seed, keep)
+        model = (struct_world(seed) if "--struct" in sys.argv
+                 else world(seed) if keep is None else harsh_world(seed, keep))
         row = {"agent": run(agent.Agent, model, seed), "template": run(agent_template.Agent, model, seed),
                "prior_only": run(PriorOnly, model, seed), "oracle": run(make_oracle(model), model, seed),
                "exp_prior": run(ExpPrior, model, seed)}

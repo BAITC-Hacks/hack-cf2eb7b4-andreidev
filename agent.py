@@ -28,6 +28,7 @@ USE_FIT = True      # поправка prior: влезает ли трафик �
 DATA_DIR = Path(__file__).parent / "data"
 KEY = ["tariff_plan_code_from", "seg", "tariff_plan_code_to"]
 LLM_PER_CELL = 2
+TIME_LIMIT = 480     # с; ТЗ даёт 10 минут на act, 2 минуты запаса на план и fallback
 LLM_CLIP = 0.5      # |base| из истории почти всегда < 0.35; больше — фантазия модели
 PILOT_FRAC = 0.08   # размер пилота — доля ячейки в пределах [PILOT_MIN, PILOT_MAX]
 PILOT_MIN = 60
@@ -191,6 +192,7 @@ def _ei(mu, sd, best):
 
 
 class Agent:
+    deadline = math.inf  # ставится в act; внутренние методы, вызванные напрямую (stress_eval), без лимита
     model = None  # slug модели для LLM-эксперта; None → LLM_MODEL / OPENAI_MODEL из env
 
     def __init__(self):
@@ -198,6 +200,7 @@ class Agent:
 
     def act(self, env):
         self.log, self.llm_audit, self.weights = [], [], {}
+        self.deadline = time.time() + TIME_LIMIT
         arms = {}
         try:
             cells, arms = self._arms(env)
@@ -224,6 +227,9 @@ class Agent:
         tariffs = list(env.tariffs["tariff_plan_code"])
         props = {}
         for name in self.experts:
+            if name == "llm" and time.time() > self.deadline - 60:  # вызов LLM может занять до 60 с
+                self.log.append("llm skipped: time limit")
+                continue
             try:
                 props[name] = getattr(self, f"_expert_{name}")(env, cells, tariffs)
                 self.log.append(f"{name}: {len(props[name])} arms")
@@ -330,6 +336,9 @@ class Agent:
         ei0, llm_hits = None, []
         total = getattr(env, "total_budget", env.remaining_budget)
         while env.pilots_left > 0:
+            if time.time() > self.deadline:
+                self.log.append("explore stopped: time limit")
+                break
             ei = self._arm_ei(cells, arms)
             if PILOT_SIZING == "adaptive":  # stop по posterior confidence: уверенный рукав не перепроверяем
                 ei = {k: v for k, v in ei.items() if not arms[k]["n"]
