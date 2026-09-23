@@ -1,0 +1,8 @@
+# пакет организаторов — не коммитим, коммитим только своё
+beeline_case_participants/*
+!beeline_case_participants/agent.py
+!beeline_case_participants/stress_eval.py
+!beeline_case_participants/requirements.txt
+!beeline_case_participants/submission.csv
+__pycache__/
+.DS_Store
