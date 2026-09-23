@@ -1,0 +1,6 @@
+services:
+  app:
+    build: .
+    ports: ["8000:8000"]
+    env_file: { path: .env, required: false }  # OPENROUTER_API_KEY / LLM_MODEL / OPENAI_API_KEY
+    volumes: ["./lab:/app/lab"]                 # версии лаборатории переживают пересборку

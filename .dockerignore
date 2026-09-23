@@ -1,0 +1,9 @@
+.git
+.env
+.claude
+.DS_Store
+__pycache__
+lab/
+web/node_modules
+web/dist
+*.pdf

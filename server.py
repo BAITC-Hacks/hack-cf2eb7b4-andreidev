@@ -287,6 +287,12 @@ def lab_audit():
     return rows[-50:][::-1]
 
 
+_dist = Path(__file__).parent / "web" / "dist"
+if _dist.exists():  # ponytail: в docker фронт отдаёт сам API, в dev по-прежнему vite
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_dist, html=True), name="web")
+
+
 if __name__ == "__main__":
     r = run_payload(42, "mock", False)
     assert 1 <= len(r["plan"]) <= 10, r["plan"]

@@ -75,6 +75,12 @@ uvicorn server:app --port 8000          # из корня репо; OPENROUTER_A
 cd web && npm i && npm run dev          # http://localhost:5173, /api проксируется на :8000
 ```
 
+Или одной командой в Docker (API и собранный фронт на одном порту):
+```bash
+docker compose up --build               # http://localhost:8000; ключи LLM из .env, версии лаборатории в ./lab
+```
+Пакет организаторов (`data/`, `environment.py`, `mock_environment.py`, `scoring_core.py`, `customer_profile.csv` и т. д.) должен лежать в корне репо: в git его нет, в образ он попадает из рабочей копии.
+
 Экраны повторяют конвейер агента (1 Аудитория → 2 Гипотезы → 3 Пилоты → 4 Финальный план), плюс Командный центр, Стратегии (вклад экспертов и ablation на стресс-мирах), Privacy (что видит LLM, prompt inspector) и Логи. В «Пилотах» есть пошаговый replay разведки. Экран можно открыть по ссылке `#hypotheses`, `#plan` и т. п. `python3 server.py` — self-check API без запуска сервера.
 
 ## Лаборатория версий (`lab.py`)
