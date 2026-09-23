@@ -9,13 +9,14 @@ API для UI (web/): запускает агента в мок- или стре
 """
 
 import functools
+import json
 import math
 import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 
 _env_file = Path(__file__).parent / ".env"
 if _env_file.exists():  # ponytail: без python-dotenv, формат KEY=VALUE
@@ -26,6 +27,7 @@ if _env_file.exists():  # ponytail: без python-dotenv, формат KEY=VALUE
 
 import agent  # noqa: E402
 import agent_template  # noqa: E402
+import lab  # noqa: E402
 import stress_eval as se  # noqa: E402  (грузит profile / dict_tariff / history)
 from environment import make_environment  # noqa: E402
 from mock_environment import CHANNELS, MAX_TOTAL_CONTACTS, TOTAL_BUDGET, _mock_fallback, _mock_impact_model  # noqa: E402
@@ -36,12 +38,21 @@ app = FastAPI(title="Beeline campaign cockpit")
 
 
 class Traced(agent.Agent):
-    """Тот же агент; запоминает prior и реестр рукавов, чтобы UI мог их показать."""
+    """Тот же агент; запоминает prior, реестр рукавов и снимки апостериора перед каждым пилотом (replay)."""
 
     def _explore(self, env, cells, arms):
         self.prior = {k: (a["mu"], a["var"]) for k, a in arms.items()}
-        self.cells, self.arms = cells, arms
+        self.cells, self.arms, self.snaps = cells, arms, []
+        run_pilot = env.run_pilot
+
+        def traced(**kw):  # env.run_pilot — атрибут инстанса, агент вызывает его только с kwargs
+            ei = self._arm_ei(cells, arms)
+            self.snaps.append(({k: (a["mu"], math.sqrt(a["var"]), a["n"]) for k, a in arms.items()}, ei,
+                               (kw["filter_current_tariff"], kw["filter_arpu_segment"], kw["target_tariff"])))
+            return run_pilot(**kw)
+        env.run_pilot = traced
         super()._explore(env, cells, arms)
+        self.snaps.append(({k: (a["mu"], math.sqrt(a["var"]), a["n"]) for k, a in arms.items()}, {}, None))
 
 
 def _f(x):
@@ -120,6 +131,21 @@ def run_payload(seed=42, world="mock", llm=True):
                      "caps": [k for k in ("capped_at_campaign_limit", "capped_at_reach_budget",
                                           "capped_at_money_budget") if d.get(k)]})
 
+    replay = []
+    snaps = getattr(a, "snaps", [])
+    for i, (before, ei, k) in enumerate(snaps[:-1]):
+        after = snaps[i + 1][0]
+        top = sorted(ei, key=ei.get, reverse=True)[:5]
+        replay.append({
+            "i": i + 1, "cur": k[0], "seg": k[1], "target": k[2], "n": pilots[i]["n"] if i < len(pilots) else None,
+            "obs": pilots[i]["base"] if i < len(pilots) else None, "ei": _f(ei.get(k, 0.0)),
+            "top_ei": [{"cur": t[0], "seg": t[1], "target": t[2], "ei": _f(ei[t])} for t in top],
+            "cell": sorted(({"target": t[2], "src": sorted(arms[t].get("src", ())), "planned": t in planned,
+                             "before_mu": _f(before[t][0]), "before_sd": _f(before[t][1]),
+                             "after_mu": _f(after[t][0]), "after_sd": _f(after[t][1])}
+                            for t in before if t[:2] == k[:2]), key=lambda r: -(r["after_mu"] or 0)),
+        })
+
     p = se.profile
     aud = (p.groupby(["current_tariff", "arpu_segment"])
            .agg(n=("ID_NUMBER", "size"), S=("predicted_arpu", "sum"), arpu=("ARPU_3m_avg", "mean"))
@@ -143,6 +169,10 @@ def run_payload(seed=42, world="mock", llm=True):
         "score": {k: (_f(v) if isinstance(v, (int, float, np.number)) else v)
                   for k, v in score.items() if k != "campaigns_detail"},
         "log": a.log,
+        "replay": replay,
+        "llm_audit": a.llm_audit,
+        "privacy": {"mode": agent.PRIVACY_MODE, "allowlist": list(agent.LLM_FIELDS), "k_min": agent.K_MIN,
+                    "redacted_fields": agent.redacted_fields(se.profile.columns)},
     }
 
 
@@ -169,6 +199,86 @@ def api_strategies(runs: int = Query(5, ge=1, le=10)):
     return strategies_payload(runs)
 
 
+# --- лаборатория версий (lab.py) ---------------------------------------------
+lab.ensure_baseline()
+_SLIM = ("runs", "audit")
+
+
+def _slim(v, cur):
+    return {**{k: x for k, x in v.items() if k not in _SLIM}, "current": v["id"] == cur}
+
+
+@app.get("/api/lab/versions")
+def lab_versions():
+    cur = lab.current_id()
+    return {"versions": [_slim(v, cur) for v in lab.versions()], "pending": lab._q.unfinished_tasks}
+
+
+@app.get("/api/lab/versions/{vid}")
+def lab_version(vid: str):
+    try:
+        return {**lab.load(vid), "current": vid == lab.current_id()}
+    except FileNotFoundError:
+        raise HTTPException(404, f"нет версии {vid}")
+
+
+@app.post("/api/lab/versions")
+def lab_create(body: dict = Body(...)):
+    try:
+        v = lab.create(body.get("parent_id"), body.get("changes") or {}, created_by="human", kind="manual",
+                       hypothesis=str(body.get("hypothesis") or "")[:300])
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(400, str(e))
+    lab.mark_evaluating(v["id"])
+    lab.enqueue(lab.evaluate, v["id"])
+    return v
+
+
+@app.post("/api/lab/versions/{vid}/evaluate")
+def lab_evaluate(vid: str):
+    lab.mark_evaluating(vid)
+    lab.enqueue(lab.evaluate, vid)
+    return {"queued": vid}
+
+
+@app.post("/api/lab/versions/{vid}/remediate")
+def lab_remediate(vid: str, steps: int = Query(1, ge=1, le=3)):
+    lab.enqueue(lab.remediate, vid, steps)
+    return {"queued": vid, "steps": steps}
+
+
+@app.post("/api/lab/versions/{vid}/promote")
+def lab_promote(vid: str):
+    try:
+        v = lab.promote(vid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    lab._apply(v["config"])  # этот процесс уже импортировал agent — подтягиваем новые константы
+    run_payload.cache_clear()
+    strategies_payload.cache_clear()
+    return _slim(v, vid)
+
+
+@app.get("/api/lab/targets")
+def lab_targets():
+    return {"targets": lab.PATCH_TARGETS, "must": lab.MUST, "thresholds": lab.TH,
+            "templates": {k: {"title": t["title"], "issues": t["issues"]} for k, t in lab.TEMPLATES.items()}}
+
+
+@app.get("/api/lab/runs")
+def lab_runs():
+    keep = ("test", "world", "seed", "llm", "net", "n_campaigns", "invalid", "crash", "runtime", "fallback", "pilots",
+            "pilot_cost", "total_contacts", "log")
+    return [{"version": v["id"], **{k: r.get(k) for k in keep}} for v in lab.versions() for r in v.get("runs", [])]
+
+
+@app.get("/api/lab/audit")
+def lab_audit():
+    f = lab.LAB / "audit.jsonl"
+    rows = [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
+    return rows[-50:][::-1]
+
+
 if __name__ == "__main__":
     r = run_payload(42, "mock", False)
     assert 1 <= len(r["plan"]) <= 10, r["plan"]
@@ -178,6 +288,8 @@ if __name__ == "__main__":
     assert all((c["cur"], c["seg"], p["target_tariff"]) in keys for p in r["plan"] for c in p["cells"])
     assert all(p["cells"] for p in r["plan"]), "кампания без ячеек из _chosen"
     assert r["score"]["net_arpu_gain"] > 0, r["score"]
+    assert len(r["replay"]) == len(r["pilots"]) and all(s["cell"] for s in r["replay"]), "replay: шаг на каждый пилот"
+    assert "ID_NUMBER" in r["privacy"]["redacted_fields"]
     sub = pd.read_csv("submission.csv")["campaign_name"].tolist()
     print("plan == submission.csv:", [c["campaign_name"] for c in r["plan"]] == sub)
     print(f"ok: {len(r['arms'])} arms, {len(r['pilots'])} pilots, {len(r['plan'])} campaigns, "

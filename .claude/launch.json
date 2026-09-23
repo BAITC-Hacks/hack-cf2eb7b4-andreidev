@@ -4,14 +4,40 @@
     {
       "name": "api",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "python3 -m uvicorn server:app --port 8000"],
+      "runtimeArgs": [
+        "-c",
+        "python3 -m uvicorn server:app --port 8000"
+      ],
       "port": 8000
     },
     {
       "name": "web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "web", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "web",
+        "run",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "api-lab",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "python3 -m uvicorn server:app --port 8010"
+      ],
+      "port": 8010
+    },
+    {
+      "name": "web-lab",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "API_PORT=8010 npm --prefix web run dev -- --port 5180 --strictPort"
+      ],
+      "port": 5180
     }
   ]
 }

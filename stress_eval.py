@@ -2,6 +2,7 @@
 Стресс-проверка: агент на ИСКАЖЁННЫХ мирах (эффекты ≠ истории), как на судействе.
 
     python stress_eval.py [--runs 10]
+    python stress_eval.py --keep 0    # жёсткие миры: история бесполезна (0) или наполовину верна (0.5)
 
 Сравнивает наш агент с шаблоном, prior-only (без пилотов), оракулом (знает эффекты)
 и ablation экспертов: только prior против full (prior + llm, если есть OPENAI_API_KEY).
@@ -32,6 +33,20 @@ def world(seed):
     m = _mock_impact_model(history)
     m["arpu_change_pct"] = (m["arpu_change_pct"] * rng.uniform(0.5, 2, len(m))
                             + rng.normal(0, 0.3, len(m))).clip(-1, 3)
+    return m
+
+
+def harsh_world(seed, keep=0.0):
+    """
+    Жёсткий мир: эффекты перемешаны между переходами, keep — доля «правды истории».
+    keep=0 — история бесполезна; там стратегия без пилотов получает ~1/15 оракула,
+    как сказано в описании кейса (в world() — около половины).
+    """
+    rng = np.random.default_rng(2000 + seed)
+    m = _mock_impact_model(history)
+    shuffled = rng.permutation(m["arpu_change_pct"].values)
+    m["arpu_change_pct"] = (keep * m["arpu_change_pct"] + (1 - keep) * shuffled
+                            + rng.normal(0, 0.1, len(m))).clip(-1, 3)
     return m
 
 
@@ -110,6 +125,16 @@ def check_llm():
         assert list(llm) == [(cur, seg, target)], llm
         arm = llm[(cur, seg, target)]
         assert "prior" in arm["src"] or arm["mu"] == agent.LLM_CLIP, arm  # expected=9 клипуется; prior главнее
+        # privacy gateway: в промпт ушли только поля allowlist, отказ — с причиной, вызов в аудите
+        rec = a.llm_audit[-1]
+        assert {r["reason"] for r in rec["rejected"]} == {"unknown_tariff", "unknown_cell"}, rec["rejected"]
+        assert set(rec["fields_sent"]) <= {"tariffs_csv", "cells", "cur", "seg", "n", *agent.LLM_FIELDS}, rec["fields_sent"]
+        assert "ID_NUMBER" in rec["redacted_fields"] and "ID_NUMBER" not in rec["prompt"]
+        try:
+            agent.llm_proxy("t", {"ID_NUMBER": 1}, "", [], allowed={"cells"})
+            raise AssertionError("поле вне allowlist ушло бы в LLM")
+        except ValueError:
+            pass
 
         def boom(prompt):
             raise OSError("API down")
@@ -136,9 +161,10 @@ if __name__ == "__main__":
     # ponytail: промпт одинаков на всех seed (профиль тот же) — один ответ LLM на прогон
     agent._llm_call = functools.lru_cache(agent._llm_call)
     runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 10
+    keep = float(sys.argv[sys.argv.index("--keep") + 1]) if "--keep" in sys.argv else None  # жёсткие миры
     rows = []
     for seed in range(runs):
-        model = world(seed)
+        model = world(seed) if keep is None else harsh_world(seed, keep)
         row = {"agent": run(agent.Agent, model, seed), "template": run(agent_template.Agent, model, seed),
                "prior_only": run(PriorOnly, model, seed), "oracle": run(make_oracle(model), model, seed),
                "exp_prior": run(ExpPrior, model, seed)}

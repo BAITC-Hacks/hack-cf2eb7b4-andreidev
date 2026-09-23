@@ -1,9 +1,9 @@
 import { Alert, Button, Card, Chip, NumberField, Skeleton, Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react'
 import {
-  Coins, FlaskConical, Gauge, Lightbulb, ListChecks, Megaphone, Play, Radar, ScrollText, Swords, Users, UsersRound,
-  type LucideIcon,
+  Bug, Coins, FlaskConical, Gauge, GitBranch, GitCompare, History, Lightbulb, ListChecks, LoaderCircle, Megaphone, Play, Radar,
+  ScrollText, ShieldCheck, Swords, Users, UsersRound, Wrench, type LucideIcon,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import { fetchRun, type Run, type RunParams, type World } from './api'
 import { Kpi, fmt, money } from './ui'
 import Command from './tabs/Command'
@@ -12,17 +12,35 @@ import Hypotheses from './tabs/Hypotheses'
 import Pilots from './tabs/Pilots'
 import Strategies from './tabs/Strategies'
 import Plan from './tabs/Plan'
+import Privacy from './tabs/Privacy'
+import { useLab, type LabState } from './lab/useLab'
+import Versions from './lab/Versions'
+import Compare from './lab/Compare'
+import Runs from './lab/Runs'
+import Issues from './lab/Issues'
+import Fixes from './lab/Fixes'
 
-type TabId = 'command' | 'audience' | 'hypotheses' | 'pilots' | 'plan' | 'strategies' | 'logs'
-// step — место экрана в конвейере агента: аудитория → гипотезы → пилоты → план
-const TABS: { id: TabId; step?: number; label: string; sub: string; icon: LucideIcon; count?: (r: Run) => number }[] = [
+type TabId = 'command' | 'audience' | 'hypotheses' | 'pilots' | 'plan' | 'strategies' | 'privacy' | 'logs'
+  | 'versions' | 'compare' | 'runs' | 'issues' | 'fixes'
+// step — место экрана в конвейере агента: аудитория → гипотезы → пилоты → план; lab — экраны лаборатории версий
+const TABS: {
+  id: TabId; step?: number; lab?: boolean; label: string; sub: string; icon: LucideIcon
+  count?: (r: Run) => number; labCount?: (l: LabState) => number
+}[] = [
   { id: 'command', label: 'Командный центр', sub: 'Что делать прямо сейчас', icon: Gauge },
   { id: 'audience', step: 1, label: 'Аудитория', sub: 'Кого можно таргетировать', icon: Users, count: (r) => r.audience.cells.length },
   { id: 'hypotheses', step: 2, label: 'Гипотезы', sub: 'Что предложили эксперты', icon: Lightbulb, count: (r) => r.arms.length },
   { id: 'pilots', step: 3, label: 'Пилоты', sub: 'Что показала проверка', icon: FlaskConical, count: (r) => r.pilots.length },
   { id: 'plan', step: 4, label: 'Финальный план', sub: 'Кампании и объяснения', icon: ListChecks, count: (r) => r.plan.length },
   { id: 'strategies', label: 'Стратегии', sub: 'Эксперты и ablation', icon: Swords },
+  { id: 'privacy', label: 'Privacy', sub: 'Что видит LLM', icon: ShieldCheck, count: (r) => r.llm_audit.length },
   { id: 'logs', label: 'Логи', sub: 'Сырой лог агента', icon: ScrollText },
+  { id: 'versions', lab: true, label: 'Версии', sub: 'Lineage и карточки', icon: GitBranch, labCount: (l) => l.versions.length },
+  { id: 'compare', lab: true, label: 'Сравнение', sub: '2–3 версии рядом', icon: GitCompare },
+  { id: 'runs', lab: true, label: 'Прогоны', sub: 'Все запуски матрицы', icon: History },
+  { id: 'issues', lab: true, label: 'Issues', sub: 'Проблемы версии', icon: Bug, labCount: (l) => l.selected?.issues.length ?? 0 },
+  { id: 'fixes', lab: true, label: 'Fixes', sub: 'Предложения AI', icon: Wrench,
+    labCount: (l) => l.versions.filter((v) => v.created_by === 'llm' || v.created_by === 'template').length },
 ]
 
 export default function App() {
@@ -42,6 +60,7 @@ export default function App() {
   useEffect(() => go(params), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const current = TABS.find((t) => t.id === tab)!
+  const labState = useLab()
 
   return (
     <div className="min-h-dvh bg-background lg:pl-64">
@@ -55,10 +74,17 @@ export default function App() {
           </div>
         </div>
         <nav aria-label="Экраны" className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-col lg:overflow-visible">
-          {TABS.map((t) => {
+          {TABS.map((t, i) => {
             const active = t.id === tab
+            const n = t.labCount ? t.labCount(labState) : run && t.count ? t.count(run) : undefined
             return (
-              <button key={t.id} type="button" onClick={() => setTab(t.id)} aria-current={active ? 'page' : undefined}
+              <Fragment key={t.id}>
+              {t.lab && !TABS[i - 1]?.lab && (
+                <span className="hidden items-center gap-2 px-3 pt-4 pb-1 text-xs font-medium tracking-wide text-muted uppercase lg:flex">
+                  Лаборатория{labState.busy && <LoaderCircle className="size-3 animate-spin" aria-label="идут тесты" />}
+                </span>
+              )}
+              <button type="button" onClick={() => setTab(t.id)} aria-current={active ? 'page' : undefined}
                 className={`group flex shrink-0 cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors duration-150
                   focus-visible:outline-2 focus-visible:outline-focus
                   ${active ? 'bg-accent-soft' : 'hover:bg-default'}`}>
@@ -72,8 +98,9 @@ export default function App() {
                   </span>
                   <span className="hidden text-xs text-muted lg:block">{t.sub}</span>
                 </span>
-                {run && t.count && <span className="num hidden text-xs text-muted lg:inline">{t.count(run)}</span>}
+                {n != null && <span className="num hidden text-xs text-muted lg:inline">{n}</span>}
               </button>
+              </Fragment>
             )
           })}
         </nav>
@@ -83,12 +110,14 @@ export default function App() {
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
             <p className="text-xs font-medium tracking-wide text-muted uppercase">
-              {current.step ? `Шаг ${current.step} из 4` : 'Обзор'}
+              {current.lab ? 'Лаборатория версий' : current.step ? `Шаг ${current.step} из 4` : 'Обзор'}
             </p>
             <h1 className="text-2xl font-semibold tracking-tight">{current.label}</h1>
           </div>
-          <Controls params={params} setParams={setParams} loading={loading} llmAvailable={run?.params.llm_available ?? true}
-            onRun={() => go(params)} />
+          {current.lab
+            ? labState.busy && <span className="flex items-center gap-2 text-sm text-muted"><LoaderCircle className="size-4 animate-spin" aria-hidden />идут тесты · в очереди {labState.pending}</span>
+            : <Controls params={params} setParams={setParams} loading={loading} llmAvailable={run?.params.llm_available ?? true}
+                onRun={() => go(params)} />}
         </header>
 
         {error && (
@@ -100,8 +129,17 @@ export default function App() {
           </Alert>
         )}
 
-        {!run && !error && <LoadingState />}
-        {run && (
+        {current.lab && (
+          <div key={tab} className="rise flex flex-col gap-5">
+            {tab === 'versions' && <Versions s={labState} />}
+            {tab === 'compare' && <Compare s={labState} />}
+            {tab === 'runs' && <Runs s={labState} />}
+            {tab === 'issues' && <Issues s={labState} />}
+            {tab === 'fixes' && <Fixes s={labState} open={(id) => { labState.setSel(id); setTab('versions') }} />}
+          </div>
+        )}
+        {!current.lab && !run && !error && <LoadingState />}
+        {!current.lab && run && (
           <div key={tab + run.params.seed + run.params.world + run.params.llm}
             className={`rise flex flex-col gap-5 transition-opacity ${loading ? 'opacity-60' : ''}`}>
             {tab === 'command' && <><Summary run={run} /><Command run={run} /></>}
@@ -110,6 +148,7 @@ export default function App() {
             {tab === 'pilots' && <Pilots run={run} />}
             {tab === 'plan' && <Plan run={run} />}
             {tab === 'strategies' && <Strategies run={run} />}
+            {tab === 'privacy' && <Privacy run={run} />}
             {tab === 'logs' && (
               <Card className="p-0">
                 <pre className="num overflow-x-auto p-5 text-xs leading-relaxed">{run.log.join('\n')}</pre>

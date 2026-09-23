@@ -1,11 +1,11 @@
 import { Button, Card, Chip, Meter, Table, Tooltip } from '@heroui/react'
 import {
-  ArrowDownRight, ArrowRight, ArrowUpRight, Bell, Brain, CircleCheck, CircleSlash, History, Info,
-  Megaphone, MessageSquare, Pause, Phone, TrendingUp, type LucideIcon,
+  ArrowDownRight, ArrowRight, ArrowUpRight, Bell, Brain, CircleCheck, CircleDashed, CircleSlash, CircleX, History, Info,
+  LoaderCircle, Megaphone, MessageSquare, Pause, Phone, Rocket, TrendingUp, type LucideIcon,
 } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import type { SortDescriptor } from 'react-aria-components'
-import type { Arm } from './api'
+import type { Arm, Issue, VersionStatus } from './api'
 
 // ---------- форматирование ----------
 export const fmt = (x: number | null | undefined, d = 0) =>
@@ -89,6 +89,48 @@ export function SrcChips({ src }: { src: string[] }) {
 export function Decision({ d }: { d: keyof typeof DECISION }) {
   const m = DECISION[d]
   return <Chip size="sm" color={m.color} variant="soft" className="gap-1"><m.icon className="size-3" aria-hidden />{m.label}</Chip>
+}
+
+const VSTATUS: Record<VersionStatus, { label: string; color: 'default' | 'accent' | 'success' | 'warning' | 'danger'; icon: LucideIcon }> = {
+  draft: { label: 'draft', color: 'default', icon: CircleDashed },
+  evaluating: { label: 'тестируется', color: 'warning', icon: LoaderCircle },
+  candidate: { label: 'candidate', color: 'accent', icon: CircleCheck },
+  failed: { label: 'failed', color: 'danger', icon: CircleX },
+  promoted: { label: 'promoted', color: 'success', icon: Rocket },
+}
+export function VersionStatusChip({ s }: { s: VersionStatus }) {
+  const m = VSTATUS[s]
+  return (
+    <Chip size="sm" color={m.color} variant="soft" className="gap-1">
+      <m.icon className={`size-3 ${s === 'evaluating' ? 'animate-spin' : ''}`} aria-hidden />{m.label}
+    </Chip>
+  )
+}
+
+export function TestChip({ passed, must }: { passed: boolean; must?: boolean }) {
+  return (
+    <Chip size="sm" color={passed ? 'success' : must ? 'danger' : 'warning'} variant="soft" className="gap-1">
+      {passed ? <CircleCheck className="size-3" aria-hidden /> : <CircleX className="size-3" aria-hidden />}{passed ? 'pass' : 'fail'}
+    </Chip>
+  )
+}
+
+export const SEVERITY = { high: { label: 'высокая', color: 'danger' }, medium: { label: 'средняя', color: 'warning' }, low: { label: 'низкая', color: 'default' } } as const
+export function SeverityChip({ s }: { s: Issue['severity'] }) {
+  return <Chip size="sm" color={SEVERITY[s].color} variant="soft">{SEVERITY[s].label}</Chip>
+}
+
+/** «LCB_K: 0.5 → 0.75» */
+export function DiffLine({ d }: { d: { key: string; from: unknown; to: unknown } }) {
+  const show = (x: unknown) => (typeof x === 'string' ? (x ? `«${x.length > 40 ? x.slice(0, 40) + '…' : x}»` : '«»') : String(x))
+  return (
+    <span className="num inline-flex flex-wrap items-center gap-1 text-xs">
+      <span className="font-semibold">{d.key}</span>
+      <span className="text-muted line-through">{show(d.from)}</span>
+      <ArrowRight className="size-3 text-muted" aria-hidden />
+      <span className="rounded bg-accent-soft px-1 text-accent-soft-foreground">{show(d.to)}</span>
+    </span>
+  )
 }
 
 export function ChannelChip({ ch }: { ch: string }) {

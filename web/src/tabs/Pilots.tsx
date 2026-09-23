@@ -1,7 +1,9 @@
-import { BarChart3, FlaskConical } from 'lucide-react'
+import { Button } from '@heroui/react'
+import { BarChart3, ChevronLeft, ChevronRight, FlaskConical, Footprints } from 'lucide-react'
+import { useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Pilot, Run } from '../api'
-import { DataTable, Decision, Delta, Flow, HowTo, Section, fmt, money } from '../ui'
+import { DataTable, Decision, Delta, Flow, HowTo, Section, SrcChips, fmt, money } from '../ui'
 
 const tick = (v: number) => `${fmt(100 * v)}%`
 
@@ -50,6 +52,8 @@ export default function Pilots({ run }: { run: Run }) {
         </div>
       </Section>
 
+      {run.replay.length > 0 && <Replay run={run} />}
+
       <Section icon={FlaskConical} title="Журнал пилотов" desc="В порядке запуска: каждый следующий пилот агент выбирал по результатам предыдущих">
         <DataTable<Pilot & { i: number }> label="Пилоты" rows={pilots.map((p, i) => ({ ...p, i: i + 1 }))} rowKey={(p) => p.name}
           cols={[
@@ -69,5 +73,68 @@ export default function Pilots({ run }: { run: Run }) {
           ]} />
       </Section>
     </>
+  )
+}
+
+// Пошаговый replay разведки: что выбрал EI, что показал пилот, как сдвинулся апостериор ячейки
+function Replay({ run }: { run: Run }) {
+  const steps = run.replay
+  const [i, setI] = useState(0)
+  const st = steps[i]
+  const last = i === steps.length - 1
+  const planned = run.arms.filter((a) => a.planned)
+  return (
+    <Section icon={Footprints} title="Replay разведки" desc="Шаг за шагом: какую гипотезу агент выбрал по EI, что показал пилот и как изменилась оценка"
+      action={
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" isIconOnly aria-label="Назад" isDisabled={i === 0} onPress={() => setI(i - 1)}><ChevronLeft className="size-4" /></Button>
+          <input type="range" min={0} max={steps.length - 1} value={i} onChange={(e) => setI(Number(e.target.value))}
+            aria-label="Шаг replay" className="w-40 accent-[var(--accent)] sm:w-64" />
+          <Button size="sm" variant="ghost" isIconOnly aria-label="Вперёд" isDisabled={last} onPress={() => setI(i + 1)}><ChevronRight className="size-4" /></Button>
+          <span className="num w-14 text-right text-sm">{st.i} / {steps.length}</span>
+        </div>
+      }>
+      <div className="grid gap-5 lg:grid-cols-[1fr_1.4fr]">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2 rounded-xl bg-default/60 p-3">
+            <span className="text-xs text-muted">Пилот №{st.i}: гипотеза с максимальным EI × Σ ARPU</span>
+            <Flow from={[`${st.cur} · ${st.seg}`]} to={st.target} />
+            <span className="text-sm">{st.n} аб. через SMS → наблюдали <Delta v={st.obs} /> · EI {money(st.ei)}</span>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted">Кандидаты по EI на этом шаге</span>
+            {st.top_ei.map((t) => {
+              const chosen = t.cur === st.cur && t.seg === st.seg && t.target === st.target
+              return (
+                <span key={t.cur + t.seg + t.target} className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1 text-sm ${chosen ? 'bg-accent-soft' : ''}`}>
+                  <Flow from={[`${t.cur} · ${t.seg}`]} to={t.target} />
+                  <span className="num text-xs">{money(t.ei)}</span>
+                </span>
+              )
+            })}
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted">Оценки гипотез ячейки {st.cur} · {st.seg}: до пилота → после</span>
+          {st.cell.map((c) => (
+            <div key={c.target} className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-2 py-1.5 text-sm ${c.target === st.target ? 'bg-accent-soft' : ''}`}>
+              <span className="num w-20 font-medium">{c.target}</span>
+              <SrcChips src={c.src} />
+              <span className="ml-auto inline-flex items-center gap-1">
+                <Delta v={c.before_mu} /><span className="text-xs text-muted">± {fmt(100 * c.before_sd, 1)}%</span>
+                <span className="text-muted">→</span>
+                <Delta v={c.after_mu} /><span className="text-xs text-muted">± {fmt(100 * c.after_sd, 1)}%</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      {last && (
+        <p className="rounded-xl border border-border px-4 py-3 text-sm">
+          <b>Итог разведки.</b> В план прошли {planned.length} гипотез, у которых нижняя граница μ − {run.limits.lcb_k}σ &gt; 0 и которые лучшие в своей ячейке.
+          Непроверенные догадки LLM в план не допускаются. Детали — на экране «Финальный план».
+        </p>
+      )}
+    </Section>
   )
 }
