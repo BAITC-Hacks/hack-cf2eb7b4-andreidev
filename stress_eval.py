@@ -5,7 +5,7 @@
     python stress_eval.py --keep 0    # жёсткие миры: история бесполезна (0) или наполовину верна (0.5)
 
 Сравнивает наш агент с шаблоном, prior-only (без пилотов), оракулом (знает эффекты)
-и ablation экспертов: только prior против full (prior + llm, если есть OPENAI_API_KEY).
+и ablation экспертов: только prior против full (prior + llm, если есть OPENROUTER_API_KEY или OPENAI_API_KEY).
 """
 
 import functools
@@ -114,10 +114,16 @@ def check_llm():
     canned = json.dumps({"arms": [{"cur": cur, "seg": seg, "target": target, "expected": 9},
                                   {"cur": cur, "seg": seg, "target": "tariff_404", "expected": 0.1},
                                   {"cur": "x", "seg": seg, "target": target, "expected": 0.1}]})
-    orig, key = agent._llm_call, os.environ.get("OPENAI_API_KEY")
-    os.environ["OPENAI_API_KEY"] = "test"
+    saved = {k: os.environ.pop(k, None) for k in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "LLM_MODEL")}
+    orig = agent._llm_call
     try:
-        agent._llm_call = lambda prompt: canned
+        # провайдер: OpenRouter-ключ главнее OpenAI, явная модель главнее env
+        os.environ.update(OPENAI_API_KEY="oa", OPENROUTER_API_KEY="or", LLM_MODEL="m/env")
+        assert agent.llm_config() == ("https://openrouter.ai/api/v1", "or", "m/env")
+        assert agent.llm_config("m/ui")[2] == "m/ui"
+        del os.environ["OPENROUTER_API_KEY"]
+        assert agent.llm_config()[1:] == ("oa", os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
+        agent._llm_call = lambda prompt, model=None: canned
         a = agent.Agent()
         a.log = []
         _, arms = a._arms(env)
@@ -136,7 +142,7 @@ def check_llm():
         except ValueError:
             pass
 
-        def boom(prompt):
+        def boom(prompt, model=None):
             raise OSError("API down")
         agent._llm_call = boom
         env, _ = make_environment(profile, _mock_impact_model(history), dict_tariff, CHANNELS, TOTAL_BUDGET,
@@ -146,18 +152,18 @@ def check_llm():
         assert 1 <= len(camps) <= 10 and any("llm skipped" in l for l in a.log), a.log
     finally:
         agent._llm_call = orig
-        if key is None:
-            del os.environ["OPENAI_API_KEY"]
-        else:
-            os.environ["OPENAI_API_KEY"] = key
+        for k, v in saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
     print("llm: невалидные предложения отсеяны, сбой API → план без LLM")
 
 
 if __name__ == "__main__":
     check_never_empty()
     check_llm()
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("нет OPENAI_API_KEY: agent (full) = exp_prior")
+    if not agent.llm_config()[1]:
+        print("нет LLM-ключа: agent (full) = exp_prior")
     # ponytail: промпт одинаков на всех seed (профиль тот же) — один ответ LLM на прогон
     agent._llm_call = functools.lru_cache(agent._llm_call)
     runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 10

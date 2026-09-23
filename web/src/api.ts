@@ -18,7 +18,7 @@ export type Campaign = {
 export type AudienceCell = { cur: string; seg: string; n: number; S: number; arpu: number }
 export type Channel = { cost_per_contact: number; conversion_multiplier: number }
 export type Run = {
-  params: { seed: number; world: World; llm: boolean; llm_available: boolean }
+  params: { seed: number; world: World; llm: boolean; llm_available: boolean; model?: string; models?: string[] }
   limits: {
     total_budget: number; total_contacts: number; total_pilots: number
     budget_after_pilots: number; contacts_after_pilots: number; pilots_left: number; lcb_k: number
@@ -44,7 +44,7 @@ export type ReplayStep = {
 }
 // Запись privacy gateway: что ушло в LLM, что вернулось, что отброшено
 export type AuditRec = {
-  task: string; mode: string; fields_sent: string[]; redacted_fields: string[]; prompt: string; prompt_sha: string
+  task: string; model?: string; mode: string; fields_sent: string[]; redacted_fields: string[]; prompt: string; prompt_sha: string
   response: string | null; error: string | null; latency: number | null
   parsed: Record<string, unknown>[]; rejected: { row: unknown; reason: string }[]; parent_id?: string; at?: string
 }
@@ -53,7 +53,7 @@ export type Strategies = {
   summary: { name: string; median: number; min: number; positive: number }[]
 }
 export type World = 'mock' | 'stress'
-export type RunParams = { seed: number; world: World; llm: boolean }
+export type RunParams = { seed: number; world: World; llm: boolean; model: string }
 
 async function get<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
@@ -62,7 +62,7 @@ async function get<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 // старый server.py (uvicorn без --reload) не отдаёт replay/llm_audit — пустые списки вместо падения UI
-export const fetchRun = (p: RunParams) => get<Run>(`/api/run?seed=${p.seed}&world=${p.world}&llm=${p.llm}`)
+export const fetchRun = (p: RunParams) => get<Run>(`/api/run?seed=${p.seed}&world=${p.world}&llm=${p.llm}${p.model ? `&model=${encodeURIComponent(p.model)}` : ''}`)
   .then((r) => ({ ...r, replay: r.replay ?? [], llm_audit: r.llm_audit ?? [] }))
 export const fetchStrategies = (runs: number) => get<Strategies>(`/api/strategies?runs=${runs}`)
 

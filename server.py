@@ -64,12 +64,18 @@ def _model(world, seed):
     return se.world(seed) if world == "stress" else _mock_impact_model(se.history)
 
 
+# пресеты OpenRouter для селектора в UI; slug вне списка тоже принимается
+MODELS = ("deepseek/deepseek-v4-flash", "google/gemini-3.8-flash", "openai/gpt-4o-mini",
+          "anthropic/claude-haiku-4.5", "openai/gpt-5.4-mini", "moonshotai/kimi-k2.6")
+
+
 @functools.lru_cache(maxsize=64)
-def run_payload(seed=42, world="mock", llm=True):
+def run_payload(seed=42, world="mock", llm=True, llm_model=None):
     model = _model(world, seed)
     env, internals = make_environment(se.profile, model, se.dict_tariff, CHANNELS, TOTAL_BUDGET,
                                       MAX_TOTAL_CONTACTS, _mock_fallback, seed=seed)
     a = Traced()
+    a.model = llm_model
     if not llm:
         a.experts = ("prior",)
     camps = sanitize_campaigns(a.act(env), env.tariffs)[:10]
@@ -155,7 +161,8 @@ def run_payload(seed=42, world="mock", llm=True):
             for col in ("data_segment", "call_segment")}
 
     return {
-        "params": {"seed": seed, "world": world, "llm": llm, "llm_available": bool(os.environ.get("OPENAI_API_KEY"))},
+        "params": {"seed": seed, "world": world, "llm": llm, "llm_available": bool(agent.llm_config()[1]),
+                   "model": agent.llm_config(llm_model)[2], "models": MODELS},
         "limits": {"total_budget": TOTAL_BUDGET, "total_contacts": MAX_TOTAL_CONTACTS, "total_pilots": 20,
                    "budget_after_pilots": _f(env.remaining_budget), "contacts_after_pilots": int(env.remaining_contacts),
                    "pilots_left": int(env.pilots_left), "lcb_k": agent.LCB_K},
@@ -190,8 +197,9 @@ def strategies_payload(runs=5):
 
 
 @app.get("/api/run")
-def api_run(seed: int = 42, world: str = Query("mock", pattern="^(mock|stress)$"), llm: bool = True):
-    return run_payload(seed, world, llm)
+def api_run(seed: int = 42, world: str = Query("mock", pattern="^(mock|stress)$"), llm: bool = True,
+            model: str | None = Query(None, max_length=100, pattern=r"^[\w.\-/:]+$")):
+    return run_payload(seed, world, llm, model)
 
 
 @app.get("/api/strategies")

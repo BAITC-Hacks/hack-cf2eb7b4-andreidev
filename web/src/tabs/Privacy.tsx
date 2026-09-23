@@ -62,6 +62,7 @@ export default function Privacy({ run }: { run: Run }) {
                 <Accordion.Trigger className="text-sm">
                   <span className="flex flex-wrap items-center gap-2">
                     <b>{r.task}</b><code className="num text-xs text-muted">{r.prompt_sha}</code>
+                    {r.model && <code className="num text-xs text-muted">{r.model}</code>}
                     <Chip size="sm" variant="soft">{r.mode}</Chip>
                     {r.error ? <Chip size="sm" color="danger" variant="soft">ошибка</Chip>
                       : <Chip size="sm" color="success" variant="soft">принято {r.parsed.length} · отклонено {r.rejected.length}</Chip>}

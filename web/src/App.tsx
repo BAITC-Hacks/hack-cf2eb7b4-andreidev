@@ -44,7 +44,7 @@ const TABS: {
 ]
 
 export default function App() {
-  const [params, setParams] = useState<RunParams>({ seed: 42, world: 'mock', llm: true })
+  const [params, setParams] = useState<RunParams>({ seed: 42, world: 'mock', llm: true, model: '' })
   const [run, setRun] = useState<Run>()
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(false)
@@ -117,6 +117,7 @@ export default function App() {
           {current.lab
             ? labState.busy && <span className="flex items-center gap-2 text-sm text-muted"><LoaderCircle className="size-4 animate-spin" aria-hidden />идут тесты · в очереди {labState.pending}</span>
             : <Controls params={params} setParams={setParams} loading={loading} llmAvailable={run?.params.llm_available ?? true}
+                models={run?.params.models ?? []} defaultModel={run?.params.model}
                 onRun={() => go(params)} />}
         </header>
 
@@ -140,7 +141,7 @@ export default function App() {
         )}
         {!current.lab && !run && !error && <LoadingState />}
         {!current.lab && run && (
-          <div key={tab + run.params.seed + run.params.world + run.params.llm}
+          <div key={tab + run.params.seed + run.params.world + run.params.llm + run.params.model}
             className={`rise flex flex-col gap-5 transition-opacity ${loading ? 'opacity-60' : ''}`}>
             {tab === 'command' && <><Summary run={run} /><Command run={run} /></>}
             {tab === 'audience' && <Audience run={run} />}
@@ -162,8 +163,9 @@ export default function App() {
 }
 
 // Панель запуска: все контролы одной высоты (40px) в одной «капсуле»
-function Controls({ params, setParams, loading, llmAvailable, onRun }: {
-  params: RunParams; setParams: (p: RunParams) => void; loading: boolean; llmAvailable: boolean; onRun: () => void
+function Controls({ params, setParams, loading, llmAvailable, models, defaultModel, onRun }: {
+  params: RunParams; setParams: (p: RunParams) => void; loading: boolean; llmAvailable: boolean
+  models: string[]; defaultModel?: string; onRun: () => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-surface p-1.5 shadow-sm">
@@ -189,6 +191,13 @@ function Controls({ params, setParams, loading, llmAvailable, onRun }: {
         <Switch.Control><Switch.Thumb /></Switch.Control>
         <span className="text-sm font-medium whitespace-nowrap">LLM-эксперт</span>
       </Switch>
+      {/* ponytail: нативный datalist — пресеты первыми, любой slug OpenRouter вписывается руками */}
+      <input aria-label="Модель LLM" list="llm-models" value={params.model} spellCheck={false}
+        disabled={!params.llm || !llmAvailable} placeholder={defaultModel ?? 'модель по умолчанию'}
+        onChange={(e) => setParams({ ...params, model: e.target.value.trim() })}
+        className="num h-10 w-60 rounded-xl bg-default px-3 text-sm outline-none placeholder:text-muted
+          focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50" />
+      <datalist id="llm-models">{models.map((m) => <option key={m} value={m} />)}</datalist>
       <Button variant="primary" isPending={loading} onPress={onRun} className="h-10 px-4 font-semibold">
         {!loading && <Play className="size-4" aria-hidden />}Запустить агента
       </Button>
@@ -211,7 +220,7 @@ function Summary({ run }: { run: Run }) {
         <div className="flex flex-wrap items-center gap-2">
           <Chip size="sm" color={net > 0 ? 'success' : 'danger'} variant="soft">{net > 0 ? 'PASS' : 'FAIL'}</Chip>
           <Chip size="sm" variant="soft">{params.world === 'mock' ? 'Мок-мир' : 'Стресс-мир'} · seed {params.seed}</Chip>
-          <Chip size="sm" variant="soft">{params.llm ? 'с LLM' : 'без LLM'}</Chip>
+          <Chip size="sm" variant="soft">{params.llm ? `с LLM${params.model ? ` · ${params.model}` : ''}` : 'без LLM'}</Chip>
         </div>
         <div>
           <p className="text-sm text-muted">Чистый прирост ARPU в симуляции</p>

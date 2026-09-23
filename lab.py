@@ -216,11 +216,11 @@ def _disk_cached(call):
     тот же конфиг давал медиану стресс-миров 6.57M и 7.06M в двух прогонах.
     Версии с другим промптом (LLM_PROMPT_EXTRA, PRIVACY_MODE…) получают свой ответ.
     """
-    def f(prompt):
-        p = LAB / "llm_cache" / f"{_sha(prompt)}.txt"
+    def f(prompt, model=None):
+        p = LAB / "llm_cache" / f"{_sha(prompt if model is None else model + prompt)}.txt"
         if p.exists():
             return p.read_text()
-        out = call(prompt)
+        out = call(prompt, model)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(out)
         return out
@@ -281,7 +281,7 @@ def run_once(config, world, seed, test):
                       "gain": sum(x["mu"] * CHANNELS[x["ch"]]["conversion_multiplier"] * x["S"]
                                   for x in chosen if e in arms.get((x["cur"], x["seg"], x["target"]), {}).get("src", ()))}
     return {
-        "test": test, "world": world, "seed": seed, "llm": bool(config["USE_LLM"] and os.environ.get("OPENAI_API_KEY")),
+        "test": test, "world": world, "seed": seed, "llm": bool(config["USE_LLM"] and agent.llm_config()[1]),
         "net": float(score["net_arpu_gain"]), "raw_campaigns": len(raw), "n_campaigns": len(camps),
         "invalid": len(raw) - len(camps), "crash": crash, "runtime": round(runtime, 2),
         "fallback": any(l.startswith("fallback") for l in a.log) or any(c["campaign_name"].startswith("fallback") for c in camps),
@@ -555,7 +555,7 @@ def propose(parent):
             "rationale": "Шаблон для: " + (", ".join(i["code"] for i in issues if t in i["templates"]) or "без issues — проверка улучшения"),
             "expected_benefit": "устранить: " + ", ".join(i["code"] for i in issues if t in i["templates"])}
     audit = []
-    if os.environ.get("OPENAI_API_KEY"):
+    if agent.llm_config()[1]:
         m = parent["metrics"]
         ctx = {
             "issues": [{"code": i["code"], "severity": i["severity"], "evidence": i["evidence"]} for i in issues],
@@ -659,7 +659,7 @@ def promote(vid):
     text = set_constants(path.read_text(), v["config"])
     assert read_constants(text) == v["config"], "константы не записались"
     path.write_text(text)
-    env = {k: x for k, x in os.environ.items() if k != "OPENAI_API_KEY"}  # submission.csv воспроизводим без ключа
+    env = {k: x for k, x in os.environ.items() if k not in ("OPENAI_API_KEY", "OPENROUTER_API_KEY")}  # submission.csv воспроизводим без ключа
     r = subprocess.run([sys.executable, "make_submission.py"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=600)
     v.update(status="promoted", promoted=True, promoted_at=_now(), submission=r.stdout[-2000:] + r.stderr[-2000:], commit_hash=_commit())
     save(v)
@@ -727,6 +727,7 @@ if __name__ == "__main__":
     assert "перепрогони" in gate({"tests": t_ok, "metrics": mk(5, 6, 7)}, {"id": "old", "metrics": {"stress": {"median": 7}, "negative_runs": 0}})["reasons"][0]
     # быстрая матрица на baseline + один шаг ремедиации (без LLM)
     os.environ.pop("OPENAI_API_KEY", None)
+    os.environ.pop("OPENROUTER_API_KEY", None)
     LAB = Path(tempfile.mkdtemp())
     SEEDS, PRIMARY_SEEDS = SEEDS[:2], PRIMARY_SEEDS[:2]
     ensure_baseline()

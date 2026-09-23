@@ -104,14 +104,23 @@ def _prior(h, shift=None):
     return {(r.tariff_plan_code_from, r.seg, r.tariff_plan_code_to): r.base for r in g.itertuples()}
 
 
-def _llm_call(prompt):
-    base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+def llm_config(model=None):
+    """(base_url, key, model): OpenRouter, если есть OPENROUTER_API_KEY, иначе OpenAI (так ключ дают организаторы)."""
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return ("https://openrouter.ai/api/v1", os.environ["OPENROUTER_API_KEY"],
+                model or os.environ.get("LLM_MODEL", "openai/gpt-4o-mini"))
+    return (os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"), os.environ.get("OPENAI_API_KEY"),
+            model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
+
+
+def _llm_call(prompt, model=None):
+    base, key, model = llm_config(model)
     req = urllib.request.Request(
         base + "/chat/completions",
-        data=json.dumps({"model": os.environ.get("OPENAI_MODEL", "gpt-4o-mini"), "temperature": 0,
+        data=json.dumps({"model": model, "temperature": 0,
                          "response_format": {"type": "json_object"},
                          "messages": [{"role": "user", "content": prompt}]}).encode(),
-        headers={"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}", "Content-Type": "application/json"})
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read())["choices"][0]["message"]["content"]
 
@@ -152,7 +161,7 @@ def _keys(obj):
     return set()
 
 
-def llm_proxy(task, ctx, instruction, audit, allowed, redacted=()):
+def llm_proxy(task, ctx, instruction, audit, allowed, redacted=(), model=None):
     """
     Privacy gateway, шаг «запрос»: промпт строится только из instruction + safe JSON.
     Ключ вне allowlist → отказ до вызова. Каждый вызов (и сбой) пишется в audit.
@@ -161,13 +170,13 @@ def llm_proxy(task, ctx, instruction, audit, allowed, redacted=()):
     if extra:
         raise ValueError(f"privacy: поля вне allowlist: {sorted(extra)}")
     prompt = instruction + "\n\nКонтекст (JSON):\n" + json.dumps(ctx, ensure_ascii=False)
-    rec = {"task": task, "mode": PRIVACY_MODE, "fields_sent": sorted(_keys(ctx)), "redacted_fields": list(redacted),
+    rec = {"task": task, "model": llm_config(model)[2], "mode": PRIVACY_MODE, "fields_sent": sorted(_keys(ctx)), "redacted_fields": list(redacted),
            "prompt": prompt, "prompt_sha": hashlib.sha256(prompt.encode()).hexdigest()[:12],
            "response": None, "error": None, "latency": None, "parsed": [], "rejected": []}
     audit.append(rec)
     t = time.time()
     try:
-        rec["response"] = _llm_call(prompt)
+        rec["response"] = _llm_call(prompt, model)
         return rec["response"]
     except Exception as e:
         rec["error"] = f"{type(e).__name__}: {e}"
@@ -182,6 +191,8 @@ def _ei(mu, sd, best):
 
 
 class Agent:
+    model = None  # slug модели для LLM-эксперта; None → LLM_MODEL / OPENAI_MODEL из env
+
     def __init__(self):
         self.log, self.llm_audit, self.weights = [], [], {}
 
@@ -253,13 +264,13 @@ class Agent:
         if not USE_LLM:
             self.log.append("llm: выключен (USE_LLM=False)")
             return {}
-        if not os.environ.get("OPENAI_API_KEY"):
-            self.log.append("llm: нет OPENAI_API_KEY")
+        if not llm_config()[1]:
+            self.log.append("llm: нет OPENROUTER_API_KEY / OPENAI_API_KEY")
             return {}
         ctx, redacted = safe_context(env.customer_profile, cells, env.tariffs.to_csv(index=False))
         instruction = LLM_INSTRUCTION.format(per_cell=LLM_PER_CELL) + ("\n" + LLM_PROMPT_EXTRA if LLM_PROMPT_EXTRA else "")
         text = llm_proxy("expert_llm", ctx, instruction, self.llm_audit,
-                         allowed={"tariffs_csv", "cells", "cur", "seg", "n", *LLM_FIELDS}, redacted=redacted)
+                         allowed={"tariffs_csv", "cells", "cur", "seg", "n", *LLM_FIELDS}, redacted=redacted, model=self.model)
         rec = self.llm_audit[-1]
         out = self._parse_llm(text, cells, tariffs, rec["rejected"], rec["parsed"])
         self.log.append(f"llm: prompt {rec['prompt_sha']} ({PRIVACY_MODE}), принято {len(out)}, "
