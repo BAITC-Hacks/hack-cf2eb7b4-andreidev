@@ -13,7 +13,7 @@ from pathlib import Path
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTableUUID
-from sqlalchemy import CheckConstraint, Integer, String, Text, create_engine, text
+from sqlalchemy import CheckConstraint, DateTime, Float, Integer, String, Text, create_engine, func, text
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -72,6 +72,32 @@ class TemplateNet(Base):
     __tablename__ = "template_net"
     seed: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     data: Mapped[dict] = mapped_column(JSONB)
+
+
+class CampaignResult(Base):
+    """База знаний: наблюдение на аудитории (пилот прогона или итог кампании из CRM) → Agent.feedback."""
+    __tablename__ = "campaign_result"
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)  # дедуп: {world}:{seed}:{pilot} или sha1 строки CSV
+    world: Mapped[str] = mapped_column(String(32), index=True)  # mock | stress:<seed> — эффекты разных миров не смешиваем
+    cur: Mapped[str] = mapped_column(String(32))
+    seg: Mapped[str] = mapped_column(String(8))
+    target: Mapped[str] = mapped_column(String(32))
+    channel: Mapped[str] = mapped_column(String(16))
+    n: Mapped[int] = mapped_column(Integer)
+    lift_ratio: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(16))  # pilot | campaign
+    created_by: Mapped[str] = mapped_column(String(320))
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DatasetUpload(Base):
+    __tablename__ = "dataset_upload"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    rows: Mapped[int] = mapped_column(Integer)
+    sha: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(320))
+    created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 def use_schema(schema):

@@ -7,3 +7,4 @@ lab/
 web/node_modules
 web/dist
 *.pdf
+uploads/

@@ -18,7 +18,10 @@ export type Campaign = {
 export type AudienceCell = { cur: string; seg: string; n: number; S: number; arpu: number }
 export type Channel = { cost_per_contact: number; conversion_multiplier: number }
 export type Run = {
-  params: { seed: number; world: World; llm: boolean; llm_available: boolean; model?: string; models?: string[] }
+  params: {
+    seed: number; world: World; llm: boolean; llm_available: boolean; model?: string; models?: string[]
+    feedback?: boolean; feedback_rows?: number  // нет у старого server.py
+  }
   limits: {
     total_budget: number; total_contacts: number; total_pilots: number
     budget_after_pilots: number; contacts_after_pilots: number; pilots_left: number; lcb_k: number
@@ -53,7 +56,7 @@ export type Strategies = {
   summary: { name: string; median: number; min: number; positive: number }[]
 }
 export type World = 'mock' | 'stress'
-export type RunParams = { seed: number; world: World; llm: boolean; model: string }
+export type RunParams = { seed: number; world: World; llm: boolean; model: string; feedback: boolean }
 
 async function get<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
@@ -75,7 +78,8 @@ export const login = async (email: string, password: string) => {
 export const logout = () => fetch('/api/auth/logout', { method: 'POST' })
 
 // старый server.py (uvicorn без --reload) не отдаёт replay/llm_audit — пустые списки вместо падения UI
-export const fetchRun = (p: RunParams) => get<Run>(`/api/run?seed=${p.seed}&world=${p.world}&llm=${p.llm}${p.model ? `&model=${encodeURIComponent(p.model)}` : ''}`)
+const runQuery = (p: RunParams) => `seed=${p.seed}&world=${p.world}&llm=${p.llm}&feedback=${p.feedback}${p.model ? `&model=${encodeURIComponent(p.model)}` : ''}`
+export const fetchRun = (p: RunParams) => get<Run>(`/api/run?${runQuery(p)}`)
   .then((r) => ({ ...r, replay: r.replay ?? [], llm_audit: r.llm_audit ?? [] }))
 export const fetchStrategies = (runs: number) => get<Strategies>(`/api/strategies?runs=${runs}`)
 
@@ -129,3 +133,22 @@ export const lab = {
   remediate: (id: string, steps = 1) => post(`/api/lab/versions/${id}/remediate?steps=${steps}`),
   promote: (id: string) => post<Version>(`/api/lab/versions/${id}/promote`),
 }
+
+// ---------- новые данные: CSV и база знаний (datasets.py) ----------
+export type DataKind = 'campaign_results' | 'change_tariff' | 'traffic' | 'dict_tariff' | 'customer_profile'
+export type DataSummary = {
+  datasets: { kind: DataKind; source: 'original' | 'upload' | 'db'; rows: number; columns: string[]; uploaded_by: string | null; uploaded_at: string | null }[]
+  feedback: { world: string; source: 'pilot' | 'campaign'; rows: number }[]
+}
+export const fetchData = () => get<DataSummary>('/api/data')
+/** 422 → массив ошибок валидации в Error.cause */
+export const uploadData = async (kind: DataKind, file: File) => {
+  const body = new FormData()
+  body.append('file', file)
+  const r = await fetch(`/api/data/${kind}`, { method: 'POST', body })
+  if (r.status === 401) window.dispatchEvent(new Event('unauthorized'))
+  if (r.ok) return r.json() as Promise<{ kind: DataKind; rows: number }>
+  const detail = (await r.json().catch(() => ({}))).detail
+  throw new Error(`${r.status}`, { cause: Array.isArray(detail) ? detail.map((d: unknown) => (typeof d === 'string' ? d : (d as { msg?: string }).msg ?? JSON.stringify(d))) : [String(detail ?? r.statusText)] })
+}
+export const saveRunPilots = (p: RunParams) => get<{ world: string; added: number }>(`/api/feedback/run?${runQuery(p)}`, { method: 'POST' })

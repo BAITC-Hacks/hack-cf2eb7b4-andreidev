@@ -32,6 +32,7 @@ export default function Hypotheses({ run }: { run: Run }) {
           <ToggleButton id="all">Все</ToggleButton>
           <ToggleButton id="prior">История</ToggleButton>
           <ToggleButton id="llm">LLM</ToggleButton>
+          <ToggleButton id="feedback">База знаний</ToggleButton>
         </ToggleButtonGroup>
         <span className="ml-2 text-sm text-muted">Статус</span>
         <ToggleButtonGroup aria-label="Статус" selectionMode="single" disallowEmptySelection size="sm"

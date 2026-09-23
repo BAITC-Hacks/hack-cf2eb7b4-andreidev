@@ -19,7 +19,7 @@ export default function Manager({ user, onSignOut }: { user: User; onSignOut: ()
   const go = () => {
     setLoading(true)
     setError(undefined)
-    fetchRun({ seed: 42, world: 'mock', llm: true, model: '' }).then(setRun, (e) => setError(String(e))).finally(() => setLoading(false))
+    fetchRun({ seed: 42, world: 'mock', llm: true, model: '', feedback: true }).then(setRun, (e) => setError(String(e))).finally(() => setLoading(false))
   }
 
   return (

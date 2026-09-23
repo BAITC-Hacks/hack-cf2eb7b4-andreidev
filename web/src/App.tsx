@@ -1,10 +1,10 @@
 import { Alert, Button, Card, Chip, NumberField, Skeleton, Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react'
 import {
-  BookOpen, Bug, Calculator, Coins, FlaskConical, Gauge, GitBranch, GitCompare, History, Lightbulb, ListChecks, LoaderCircle, Megaphone, Play, Radar,
+  BookOpen, Bug, Calculator, Coins, Database, FlaskConical, Gauge, GitBranch, GitCompare, History, Lightbulb, ListChecks, LoaderCircle, Megaphone, Play, Radar,
   ScrollText, ShieldCheck, Swords, Users, UsersRound, Wrench, type LucideIcon,
 } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useState } from 'react'
-import { fetchRun, type Run, type RunParams, type User, type World } from './api'
+import { fetchRun, saveRunPilots, type Run, type RunParams, type User, type World } from './api'
 import { UserBadge } from './Auth'
 import { Docs, Help } from './Guide'
 import { Hint, Kpi, Tip, fmt, money } from './ui'
@@ -16,6 +16,7 @@ import Strategies from './tabs/Strategies'
 import Plan from './tabs/Plan'
 import Privacy from './tabs/Privacy'
 import Rules from './tabs/Rules'
+import Data from './tabs/Data'
 import { useLab, type LabState } from './lab/useLab'
 import Versions from './lab/Versions'
 import Compare from './lab/Compare'
@@ -23,7 +24,7 @@ import Runs from './lab/Runs'
 import Issues from './lab/Issues'
 import Fixes from './lab/Fixes'
 
-type TabId = 'command' | 'rules' | 'audience' | 'hypotheses' | 'pilots' | 'plan' | 'strategies' | 'privacy' | 'logs' | 'docs'
+type TabId = 'command' | 'rules' | 'audience' | 'hypotheses' | 'pilots' | 'plan' | 'strategies' | 'privacy' | 'logs' | 'data' | 'docs'
   | 'versions' | 'compare' | 'runs' | 'issues' | 'fixes'
 // step — место экрана в конвейере агента: аудитория → гипотезы → пилоты → план; lab — экраны лаборатории версий
 const TABS: {
@@ -39,6 +40,7 @@ const TABS: {
   { id: 'strategies', label: 'Стратегии', sub: 'Эксперты и ablation', icon: Swords },
   { id: 'privacy', label: 'Privacy', sub: 'Что видит LLM', icon: ShieldCheck, count: (r) => r.llm_audit.length },
   { id: 'logs', label: 'Логи', sub: 'Сырой лог агента', icon: ScrollText },
+  { id: 'data', label: 'Данные', sub: 'CSV и база знаний', icon: Database },
   { id: 'docs', label: 'Документация', sub: 'Как всё устроено', icon: BookOpen },
   { id: 'versions', lab: true, label: 'Версии', sub: 'Lineage и карточки', icon: GitBranch, labCount: (l) => l.versions.length },
   { id: 'compare', lab: true, label: 'Сравнение', sub: '2–3 версии рядом', icon: GitCompare },
@@ -51,8 +53,9 @@ const TABS: {
 export default function App({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const admin = user.role === 'admin'
   const tabs = TABS.filter((t) => !t.lab || admin)  // лаборатория меняет agent.py — только admin
-  const [params, setParams] = useState<RunParams>({ seed: 42, world: 'mock', llm: true, model: '' })
+  const [params, setParams] = useState<RunParams>({ seed: 42, world: 'mock', llm: true, model: '', feedback: true })
   const [run, setRun] = useState<Run>()
+  const [runParams, setRunParams] = useState(params)  // с чем посчитан run: «Сохранить пилоты» берёт тот же кэш
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(false)
   // вкладка живёт в #hash — можно дать ссылку на конкретный экран
@@ -62,11 +65,12 @@ export default function App({ user, onSignOut }: { user: User; onSignOut: () => 
   const go = useCallback((p: RunParams) => {
     setLoading(true)
     setError(undefined)
-    fetchRun(p).then(setRun, (e) => setError(String(e))).finally(() => setLoading(false))
+    fetchRun(p).then((r) => { setRun(r); setRunParams(p) }, (e) => setError(String(e))).finally(() => setLoading(false))
   }, [])
   useEffect(() => go(params), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const current = tabs.find((t) => t.id === tab)!
+  const standalone = tab === 'docs' || tab === 'data'  // экраны без прогона агента
   const labState = useLab(admin)
 
   return (
@@ -121,11 +125,11 @@ export default function App({ user, onSignOut }: { user: User; onSignOut: () => 
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
             <p className="text-xs font-medium tracking-wide text-muted uppercase">
-              {current.lab ? 'Лаборатория версий' : current.step ? `Шаг ${current.step} из 4` : tab === 'docs' ? 'Справка' : 'Обзор'}
+              {current.lab ? 'Лаборатория версий' : current.step ? `Шаг ${current.step} из 4` : tab === 'docs' ? 'Справка' : tab === 'data' ? 'Данные' : 'Обзор'}
             </p>
             <h1 className="text-2xl font-semibold tracking-tight">{current.label}</h1>
           </div>
-          {tab === 'docs' ? null : current.lab
+          {standalone ? null : current.lab
             ? labState.busy && <span className="flex items-center gap-2 text-sm text-muted"><LoaderCircle className="size-4 animate-spin" aria-hidden />идут тесты · в очереди {labState.pending}</span>
             : <Controls params={params} setParams={setParams} loading={loading} llmAvailable={run?.params.llm_available ?? true}
                 models={run?.params.models ?? []} defaultModel={run?.params.model}
@@ -151,15 +155,16 @@ export default function App({ user, onSignOut }: { user: User; onSignOut: () => 
           </div>
         )}
         {tab === 'docs' && <div className="rise"><Docs role={user.role} tabs={tabs} onOpen={(id) => setTab(id as TabId)} /></div>}
-        {!current.lab && tab !== 'docs' && !run && !error && <LoadingState />}
-        {!current.lab && tab !== 'docs' && run && (
-          <div key={tab + run.params.seed + run.params.world + run.params.llm + run.params.model}
+        {tab === 'data' && <div className="rise flex flex-col gap-5"><Data role={user.role} onChanged={() => go(params)} /></div>}
+        {!current.lab && !standalone && !run && !error && <LoadingState />}
+        {!current.lab && !standalone && run && (
+          <div key={tab + run.params.seed + run.params.world + run.params.llm + run.params.model + run.params.feedback_rows}
             className={`rise flex flex-col gap-5 transition-opacity ${loading ? 'opacity-60' : ''}`}>
             {tab === 'command' && <><Summary run={run} /><Command run={run} /></>}
             {tab === 'rules' && <Rules run={run} />}
             {tab === 'audience' && <Audience run={run} />}
             {tab === 'hypotheses' && <Hypotheses run={run} />}
-            {tab === 'pilots' && <Pilots run={run} />}
+            {tab === 'pilots' && <Pilots run={run} onSave={() => saveRunPilots(runParams)} />}
             {tab === 'plan' && <Plan run={run} />}
             {tab === 'strategies' && <Strategies run={run} />}
             {tab === 'privacy' && <Privacy run={run} />}
@@ -212,6 +217,13 @@ function Controls({ params, setParams, loading, llmAvailable, models, defaultMod
         <span className="text-sm font-medium whitespace-nowrap">LLM-эксперт</span>
       </Switch>
       </Tip>
+      <Tip tip="Стартовать с прошлых пилотов и итогов кампаний этого мира (вкладка «Данные»). Выключите, чтобы увидеть агента с нуля">
+      <Switch isSelected={params.feedback} onChange={(feedback) => setParams({ ...params, feedback })}
+        className="flex h-10 cursor-pointer flex-row items-center gap-2 rounded-xl bg-default px-3">
+        <Switch.Control><Switch.Thumb /></Switch.Control>
+        <span className="text-sm font-medium whitespace-nowrap">База знаний</span>
+      </Switch>
+      </Tip>
       {/* ponytail: нативный datalist — пресеты первыми, любой slug OpenRouter вписывается руками */}
       <input aria-label="Модель LLM" list="llm-models" value={params.model} spellCheck={false}
         title="Slug модели OpenRouter: выберите пресет или впишите свой. Пусто — модель по умолчанию"
@@ -245,6 +257,7 @@ function Summary({ run }: { run: Run }) {
           <Chip size="sm" color={net > 0 ? 'success' : 'danger'} variant="soft">{net > 0 ? 'PASS' : 'FAIL'}</Chip>
           <Chip size="sm" variant="soft">{params.world === 'mock' ? 'Мок-мир' : 'Стресс-мир'} · seed {params.seed}</Chip>
           <Chip size="sm" variant="soft">{params.llm ? `с LLM${params.model ? ` · ${params.model}` : ''}` : 'без LLM'}</Chip>
+          {!!params.feedback_rows && <Chip size="sm" variant="soft">база знаний · {fmt(params.feedback_rows)} набл.</Chip>}
         </div>
         <div>
           <p className="text-sm text-muted">Чистый прирост ARPU в симуляции</p>

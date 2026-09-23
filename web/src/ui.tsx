@@ -1,6 +1,6 @@
 import { Button, Card, Chip, Meter, Table, Tooltip } from '@heroui/react'
 import {
-  ArrowDownRight, ArrowRight, ArrowUpRight, Bell, Brain, CircleCheck, CircleDashed, CircleSlash, CircleX, History, Info,
+  ArrowDownRight, ArrowRight, ArrowUpRight, Bell, Brain, CircleCheck, Database, CircleDashed, CircleSlash, CircleX, History, Info,
   LoaderCircle, Megaphone, MessageSquare, Pause, Phone, Rocket, TrendingUp, type LucideIcon,
 } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
@@ -20,8 +20,11 @@ export const SRC = {
   prior: { label: 'История', long: 'prior по истории переходов', color: 'var(--series-1)', icon: History },
   llm: { label: 'LLM', long: 'предложил LLM-эксперт', color: 'var(--series-2)', icon: Brain },
   both: { label: 'История + LLM', long: 'предложили оба эксперта', color: 'var(--series-3)', icon: TrendingUp },
+  feedback: { label: 'База знаний', long: 'наблюдения прошлых пилотов и кампаний', color: 'var(--series-4)', icon: Database },
 } as const
-export const srcKey = (src: string[]) => (src.length > 1 ? 'both' : (src[0] as 'prior' | 'llm') ?? 'prior')
+type SrcId = keyof typeof SRC
+// база знаний важнее того, кто предложил: рукав с прошлыми наблюдениями окрашен как feedback
+export const srcKey = (src: string[]): SrcId => (src.includes('feedback') ? 'feedback' : src.length > 1 ? 'both' : (src[0] as SrcId) ?? 'prior')
 
 export const CHANNEL: Record<string, { label: string; icon: LucideIcon }> = {
   push: { label: 'Push', icon: Bell },
@@ -85,7 +88,7 @@ export function SrcChips({ src }: { src: string[] }) {
   return (
     <span className="flex flex-wrap gap-1">
       {src.map((s) => {
-        const m = SRC[s as 'prior' | 'llm']
+        const m = SRC[s as SrcId]
         return (
           <Chip key={s} size="sm" variant="soft" className="gap-1">
             <m.icon className="size-3" style={{ color: m.color }} aria-hidden />{m.label}
@@ -145,7 +148,7 @@ export function DiffLine({ d }: { d: { key: string; from: unknown; to: unknown }
 
 export function ChannelChip({ ch }: { ch: string }) {
   const m = CHANNEL[ch] ?? { label: ch, icon: Megaphone }
-  return <Chip size="sm" variant="secondary" className="gap-1"><m.icon className="size-3" aria-hidden />{m.label}</Chip>
+  return <Chip size="sm" variant="secondary" className="gap-1 whitespace-nowrap"><m.icon className="size-3 shrink-0" aria-hidden />{m.label}</Chip>
 }
 
 export function StatusChip({ a }: { a: Arm }) {

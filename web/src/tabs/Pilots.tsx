@@ -1,5 +1,5 @@
 import { Button } from '@heroui/react'
-import { BarChart3, ChevronLeft, ChevronRight, FlaskConical, Footprints } from 'lucide-react'
+import { BarChart3, ChevronLeft, ChevronRight, Database, FlaskConical, Footprints } from 'lucide-react'
 import { useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Pilot, Run } from '../api'
@@ -7,8 +7,15 @@ import { DataTable, Decision, Delta, Flow, HowTo, Section, SrcChips, Tip, fmt, m
 
 const tick = (v: number) => `${fmt(100 * v)}%`
 
-export default function Pilots({ run }: { run: Run }) {
+export default function Pilots({ run, onSave }: { run: Run; onSave: () => Promise<{ world: string; added: number }> }) {
   const { pilots } = run
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState<string>()
+  const save = () => {
+    setSaving(true)
+    onSave().then((r) => setSaved(r.added ? `+${r.added} в базу знаний «${r.world}»` : 'уже в базе знаний'), (e) => setSaved(String(e)))
+      .finally(() => setSaving(false))
+  }
   const data = pilots.map((p, i) => ({ i: i + 1, prior: p.prior_mu, observed: p.base, p }))
   const cost = pilots.reduce((s, p) => s + p.cost, 0)
   const n = pilots.reduce((s, p) => s + p.n, 0)
@@ -54,7 +61,17 @@ export default function Pilots({ run }: { run: Run }) {
 
       {run.replay.length > 0 && <Replay run={run} />}
 
-      <Section icon={FlaskConical} title="Журнал пилотов" desc="В порядке запуска: каждый следующий пилот агент выбирал по результатам предыдущих">
+      <Section icon={FlaskConical} title="Журнал пилотов" desc="В порядке запуска: каждый следующий пилот агент выбирал по результатам предыдущих"
+        action={
+          <div className="flex items-center gap-2">
+            {saved && <span className="text-sm text-muted">{saved}</span>}
+            <Tip tip="Следующий прогон этого мира стартует с этих наблюдений и потратит пилоты на другие гипотезы">
+              <Button size="sm" variant="secondary" isPending={saving} isDisabled={!pilots.length} onPress={save}>
+                {!saving && <Database className="size-4" aria-hidden />}Сохранить в базу знаний
+              </Button>
+            </Tip>
+          </div>
+        }>
         <DataTable<Pilot & { i: number }> label="Пилоты" rows={pilots.map((p, i) => ({ ...p, i: i + 1 }))} rowKey={(p) => p.name}
           cols={[
             { key: 'i', label: '№', render: (p) => p.i, sort: (p) => p.i, num: true },

@@ -16,8 +16,10 @@ services:
       DATABASE_URL: postgresql://cockpit:cockpit@db:5432/cockpit
       AUTH_SECRET: ${AUTH_SECRET:-dev-secret-change-me}
       # AUTH_USERS: "boss@corp.ru:пароль:manager,ann@corp.ru:пароль:analyst" — заводятся при пустой таблице
+    volumes: ["uploads:/app/uploads"]             # загруженные выгрузки (datasets.py)
     depends_on:
       db: { condition: service_healthy }
 
 volumes:
   pgdata:
+  uploads:

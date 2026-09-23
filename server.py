@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import Literal
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Path as PathParam, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 _env_file = Path(__file__).parent / ".env"
@@ -34,6 +34,7 @@ import agent  # noqa: E402
 import auth  # noqa: E402
 import db  # noqa: E402
 import agent_template  # noqa: E402
+import datasets  # noqa: E402
 import lab  # noqa: E402
 import stress_eval as se  # noqa: E402  (грузит profile / dict_tariff / history)
 from environment import make_environment  # noqa: E402
@@ -51,18 +52,21 @@ API кокпита: запускает агента тарифных кампа�
 | Роль | Доступ |
 |---|---|
 | `manager` | `/api/me`, `/api/run` |
-| `analyst` | + `/api/strategies` |
-| `admin` | + `/api/lab/*` |
+| `analyst` | + `/api/strategies`, `/api/data` (итоги кампаний), `/api/feedback/run` |
+| `admin` | + `/api/lab/*`, загрузка базовых выгрузок в `/api/data/{kind}` |
 
 Без входа — 401, не хватает роли — 403.
 """
 TAGS = [{"name": "auth", "description": "Вход и выход (fastapi-users, cookie `session`)."},
         {"name": "agent", "description": "Прогон агента и сравнение стратегий."},
+        {"name": "data", "description": "Новые данные: загрузка CSV и база знаний из пилотов и итогов кампаний."},
         {"name": "lab", "description": "Лаборатория версий агента: правки констант, оценка, промоут. Только admin."}]
 app = FastAPI(title="Beeline campaign cockpit", version="1.0", description=API_DOC, openapi_tags=TAGS,
               docs_url="/api/docs", redoc_url=None, openapi_url="/api/openapi.json")  # под /api — проксирует vite
 db.init()
 auth.bootstrap()
+if datasets.UPLOAD_DIR.exists():  # загруженные ранее выгрузки переживают рестарт
+    datasets.activate()
 ANY, ANALYST, ADMIN = (auth.require(*r) for r in (db.ROLES, ("analyst", "admin"), ("admin",)))
 auth_router = auth.fastapi_users.get_auth_router(auth.backend)
 for r in auth_router.routes:  # названия fastapi-users («Auth:Cookie.Login») → по-русски
@@ -102,6 +106,11 @@ def _f(x):
     return x if math.isfinite(x) else None
 
 
+def world_key(world, seed):
+    """Мир для базы знаний: мок один на все seed, стресс-миры разные — их наблюдения не смешиваем."""
+    return "mock" if world == "mock" else f"{world}:{seed}"
+
+
 def _model(world, seed):
     return se.world(seed) if world == "stress" else _mock_impact_model(se.history)
 
@@ -112,12 +121,13 @@ MODELS = ("deepseek/deepseek-v4-flash", "google/gemini-3.8-flash", "openai/gpt-4
 
 
 @functools.lru_cache(maxsize=64)
-def run_payload(seed=42, world="mock", llm=True, llm_model=None):
+def run_payload(seed=42, world="mock", llm=True, llm_model=None, feedback=True):
     model = _model(world, seed)
     env, internals = make_environment(se.profile, model, se.dict_tariff, CHANNELS, TOTAL_BUDGET,
                                       MAX_TOTAL_CONTACTS, _mock_fallback, seed=seed)
     a = Traced()
     a.model = llm_model
+    a.feedback = datasets.load_feedback(world_key(world, seed)) if feedback else ()
     if not llm:
         a.experts = ("prior",)
     camps = sanitize_campaigns(a.act(env), env.tariffs)[:10]
@@ -204,7 +214,8 @@ def run_payload(seed=42, world="mock", llm=True, llm_model=None):
 
     return {
         "params": {"seed": seed, "world": world, "llm": llm, "llm_available": bool(agent.llm_config()[1]),
-                   "model": agent.llm_config(llm_model)[2], "models": MODELS},
+                   "model": agent.llm_config(llm_model)[2], "models": MODELS,
+                   "feedback": feedback, "feedback_rows": len(a.feedback)},
         "limits": {"total_budget": TOTAL_BUDGET, "total_contacts": MAX_TOTAL_CONTACTS, "total_pilots": 20,
                    "budget_after_pilots": _f(env.remaining_budget), "contacts_after_pilots": int(env.remaining_contacts),
                    "pilots_left": int(env.pilots_left), "lcb_k": agent.LCB_K},
@@ -253,6 +264,8 @@ class Params(_M):
     llm_available: bool = Field(description="на сервере есть ключ LLM")
     model: str | None = Field(description="модель, которую реально взял агент")
     models: list[str] = Field(description="пресеты для селектора")
+    feedback: bool = Field(description="база знаний запрошена")
+    feedback_rows: int = Field(description="сколько прошлых наблюдений этого мира учёл агент")
 
 
 class Limits(_M):
@@ -294,7 +307,7 @@ class Arm(_M):
     cur: str
     seg: str
     target: str
-    src: list[str] = Field(description="кто предложил: prior, llm")
+    src: list[str] = Field(description="кто предложил: prior, llm, feedback (база знаний)")
     prior_mu: Num
     prior_sd: Num
     post_mu: Num
@@ -443,11 +456,12 @@ def api_run(seed: int = Query(42, description="seed среды: выборка �
                                description="`mock` — эффекты из истории, `stress` — искажённый мир из `stress_eval`"),
             llm: bool = Query(True, description="включить LLM-эксперта (нужен ключ OpenRouter/OpenAI на сервере)"),
             model: str | None = Query(None, max_length=100, pattern=r"^[\w.\-/:]+$",
-                                      description=f"slug модели OpenRouter; пресеты: {', '.join(MODELS)}")):
+                                      description=f"slug модели OpenRouter; пресеты: {', '.join(MODELS)}"),
+            feedback: bool = Query(True, description="учесть базу знаний: прошлые пилоты и итоги кампаний этого мира")):
     """Запускает агента и возвращает его состояние: `arms` (prior/posterior рукавов), `pilots`, `replay`
     (снимок перед каждым пилотом), `plan` (≤10 кампаний), `score`, `log`, `llm_audit`, `privacy`.
     Результат кешируется по параметрам. Любая роль."""
-    return run_payload(seed, world, llm, model)
+    return run_payload(seed, world, llm, model, feedback)
 
 
 @app.get("/api/strategies", dependencies=[Depends(ANALYST)], tags=["agent"], summary="Сравнение стратегий")
@@ -455,6 +469,57 @@ def api_strategies(runs: int = Query(5, ge=1, le=10, description="число с�
     """Net-выигрыш агента, агента без LLM, без пилотов, шаблона и оракула на стресс-мирах: строки по seed
     и сводка (медиана, минимум, число миров в плюс). Долгий первый вызов, дальше кеш. analyst, admin."""
     return strategies_payload(runs)
+
+
+# --- новые данные (datasets.py) ----------------------------------------------
+MAX_UPLOAD = 50 * 2 ** 20
+
+
+def _data_changed():
+    run_payload.cache_clear()
+    strategies_payload.cache_clear()
+
+
+@app.get("/api/data", dependencies=[Depends(ANALYST)], tags=["data"], summary="Датасеты и база знаний")
+def api_data():
+    """Активные датасеты (исходный файл пакета или загрузка, строк, кто и когда загрузил) и число наблюдений
+    в базе знаний по мирам. analyst, admin."""
+    return datasets.summary()
+
+
+@app.post("/api/data/{kind}", tags=["data"], summary="Загрузить CSV")
+async def api_data_upload(kind: str = PathParam(description=f"одно из: {', '.join(datasets.KINDS)}"),
+                          file: UploadFile = File(description="CSV с заголовком"),
+                          user: db.User = Depends(ANALYST)):
+    """`campaign_results` — итоги кампаний (колонки `cur, seg, target, channel, n, lift_ratio`, необязательные
+    `world`, `source`) → база знаний, analyst и admin. Базовые выгрузки (`change_tariff`, `traffic`, `dict_tariff`,
+    `customer_profile`) меняют мир для всех — только admin; колонки должны совпадать с текущим файлом.
+    422 — список ошибок валидации, ничего не записано."""
+    if kind not in datasets.KINDS:
+        raise HTTPException(404, f"нет датасета {kind}")
+    if kind != "campaign_results" and user.role != "admin":
+        raise HTTPException(403, "базовые выгрузки загружает только admin")
+    raw = await file.read(MAX_UPLOAD + 1)
+    if len(raw) > MAX_UPLOAD:
+        raise HTTPException(413, f"файл больше {MAX_UPLOAD // 2 ** 20} МБ")
+    try:
+        rows = datasets.save(kind, raw, user.email)
+    except ValueError as e:
+        raise HTTPException(422, e.args[0])
+    _data_changed()
+    return {"kind": kind, "rows": rows}
+
+
+@app.post("/api/feedback/run", tags=["data"], summary="Сохранить пилоты прогона")
+def api_feedback_run(seed: int = Query(42), world: str = Query("mock", pattern="^(mock|stress)$"),
+                     llm: bool = Query(True), model: str | None = Query(None, max_length=100, pattern=r"^[\w.\-/:]+$"),
+                     feedback: bool = Query(True), user: db.User = Depends(ANALYST)):
+    """Пилоты прогона с этими параметрами (тот же кэш, что `/api/run`) → база знаний его мира. Следующий прогон
+    стартует с их апостериором и тратит пилоты на другие гипотезы. Повторное сохранение — no-op. analyst, admin."""
+    added = datasets.save_pilots(run_payload(seed, world, llm, model, feedback)["pilots"], world_key(world, seed),
+                                 seed, user.email)
+    _data_changed()
+    return {"world": world_key(world, seed), "added": added}
 
 
 # --- лаборатория версий (lab.py) ---------------------------------------------
@@ -556,7 +621,7 @@ if _dist.exists():  # ponytail: в docker фронт отдаёт сам API, в
 
 
 if __name__ == "__main__":
-    r = run_payload(42, "mock", False)
+    r = run_payload(42, "mock", False, feedback=False)
     assert 1 <= len(r["plan"]) <= 10, r["plan"]
     spent = sum(p["cost"] for p in r["pilots"])
     assert abs(spent - (TOTAL_BUDGET - r["limits"]["budget_after_pilots"])) < 1e-6, spent

@@ -73,7 +73,8 @@ LLM_INSTRUCTION = (
 )
 
 
-def _history(data_dir=DATA_DIR):
+def _history(data_dir=None):
+    data_dir = data_dir or DATA_DIR  # при вызове: server подменяет DATA_DIR на загруженные выгрузки
     h = pd.read_csv(data_dir / "change_tariff.csv")
     h = h[h["AVG_ARPU_PREV_3M"] >= 100].copy()
     h["seg"] = pd.cut(h["AVG_ARPU_PREV_3M"], [-np.inf, 1000, 5000, np.inf],
@@ -82,14 +83,14 @@ def _history(data_dir=DATA_DIR):
     return h
 
 
-def _fit_shift(h, profile, dict_tariff, data_dir=DATA_DIR):
+def _fit_shift(h, profile, dict_tariff, data_dir=None):
     """
     Сдвиг mean pct по (from, seg, to): β × (доля аудитории ячейки, чей трафик влезает
     в пакет target − та же доля в истории перехода). β — внутри-переходная регрессия
     pct на «влезает», т.е. не путается с тем, какие переходы вообще популярны.
     """
     pkg = dict_tariff.set_index("tariff_plan_code")["Data_in_PKG"]
-    usage = (pd.read_csv(data_dir / "traffic.csv", usecols=["ID_NUMBER", "DATA_VOLUME"])
+    usage = (pd.read_csv((data_dir or DATA_DIR) / "traffic.csv", usecols=["ID_NUMBER", "DATA_VOLUME"])
              .groupby("ID_NUMBER")["DATA_VOLUME"].mean())
     h = h[h["ID_NUMBER"].isin(usage.index)].copy()
     h["fit"] = (h["ID_NUMBER"].map(usage) <= h["tariff_plan_code_to"].map(pkg)).astype(float)
@@ -132,15 +133,15 @@ PKG = {"price_tariff": "price", "Data_in_PKG": "data", "Min_another_operator_in_
        "Min_another_operator_and_city_in_PKG": "min_city"}
 
 
-def usage_cols(profile_columns, data_dir=DATA_DIR):
+def usage_cols(profile_columns, data_dir=None):
     """Потребление, которое есть и в профиле аудитории, и в traffic.csv истории (имена и единицы совпадают)."""
-    t = pd.read_csv(data_dir / "traffic.csv", nrows=0).columns
+    t = pd.read_csv((data_dir or DATA_DIR) / "traffic.csv", nrows=0).columns
     return tuple(sorted((set(t) & set(profile_columns)) - {"ID_NUMBER", "tariff_plan_code"}))
 
 
-def _usage(cols, data_dir=DATA_DIR):
+def _usage(cols, data_dir=None):
     """Трафик истории: среднее за 3 последних месяца до перехода — как 3m-средние в профиле."""
-    t = pd.read_csv(data_dir / "traffic.csv", usecols=["ID_NUMBER", "time_key", *cols])
+    t = pd.read_csv((data_dir or DATA_DIR) / "traffic.csv", usecols=["ID_NUMBER", "time_key", *cols])
     t = t[t["time_key"].isin(sorted(t["time_key"].unique())[-3:])]
     return t.groupby("ID_NUMBER")[list(cols)].mean()
 
@@ -318,6 +319,16 @@ def llm_proxy(task, ctx, instruction, audit, allowed, redacted=(), model=None):
         rec["latency"] = round(time.time() - t, 2)
 
 
+def _update(a, obs, n, mult):
+    """Байесовское обновление рукава наблюдением base = obs на n абонентах: шум NOISE_STD/mult на абонента."""
+    noise_var = (NOISE_STD / mult) ** 2 / n
+    prec = 1 / a["var"] + 1 / noise_var
+    a["mu"] = (a["mu"] / a["var"] + obs / noise_var) / prec
+    a["var"], a["n"] = 1 / prec, a["n"] + n
+    a.setdefault("obs", []).append(obs)
+    return obs
+
+
 def _ei(mu, sd, best):
     z = (mu - best) / sd
     return sd * (z * 0.5 * (1 + math.erf(z / math.sqrt(2))) + math.exp(-z * z / 2) / math.sqrt(2 * math.pi))
@@ -330,6 +341,9 @@ def _lcb(a):
 class Agent:
     deadline = math.inf  # ставится в act; внутренние методы, вызванные напрямую (stress_eval), без лимита
     model = None  # slug модели для LLM-эксперта; None → LLM_MODEL / OPENAI_MODEL из env
+    # база знаний: прошлые пилоты и итоги кампаний на этой аудитории, dict(cur, seg, target, channel, n, lift_ratio).
+    # Пусто в сдаче; server.py подкладывает строки из Postgres.
+    feedback = ()
 
     def __init__(self):
         self.log, self.llm_audit, self.weights = [], [], {}
@@ -383,7 +397,25 @@ class Agent:
             src = {n for n, pr in props.items() if k in pr}
             mu = props["prior"][k] if "prior" in src else float(np.mean([props[n][k] for n in src]))
             arms[k] = {"mu": mu, "var": PRIOR_STD ** 2, "n": 0, "src": src, "obs": []}
+        self._apply_feedback(env, cells, arms)
         return cells, arms
+
+    def _apply_feedback(self, env, cells, arms):
+        """Прошлые наблюдения на этой же аудитории — апдейт апостериора до разведки, как уже сделанные пилоты.
+        Рукав, которого нет у экспертов, заводится с mu = 0: в план он попадёт по n > 0, как пилотированный."""
+        # ponytail: без затухания — старый месяц весит как новый; FEEDBACK_DECAY, когда месяцев станет много
+        used = set()
+        for r in self.feedback:
+            k = (r["cur"], r["seg"], r["target"])
+            ch = env.channels.get(r["channel"])
+            if k[:2] not in cells or k[0] == k[2] or not ch or not r["n"] > 0:
+                continue
+            a = arms.setdefault(k, {"mu": 0.0, "var": PRIOR_STD ** 2, "n": 0, "src": set(), "obs": []})
+            a["src"].add("feedback")
+            _update(a, r["lift_ratio"] / ch["conversion_multiplier"], int(r["n"]), ch["conversion_multiplier"])
+            used.add(k)
+        if self.feedback:
+            self.log.append(f"feedback: {len(self.feedback)} rows → {len(used)} arms")
 
     def _expert_prior(self, env, cells, tariffs):
         prior = {}
@@ -557,11 +589,7 @@ class Agent:
             except (RuntimeError, ValueError):
                 break
             a, m = arms[k], res["n_customers"]
-            obs, noise_var = res["observed_lift_ratio"] / mult, (NOISE_STD / mult) ** 2 / m
-            prec = 1 / a["var"] + 1 / noise_var
-            a["mu"] = (a["mu"] / a["var"] + obs / noise_var) / prec
-            a["var"], a["n"] = 1 / prec, a["n"] + m
-            a.setdefault("obs", []).append(obs)
+            obs = _update(a, res["observed_lift_ratio"] / mult, m, mult)
             self.log.append(f"pilot {cur}/{seg}->{target} n={m} obs={obs:.3f} post={a['mu']:.3f}±{math.sqrt(a['var']):.3f}")
             if META_CONTROLLER and a.get("src") == {"llm"}:
                 # мета-контроллер: вес LLM = доля его пилотов в плюс; непроверенные догадки LLM сжимаются к 0
