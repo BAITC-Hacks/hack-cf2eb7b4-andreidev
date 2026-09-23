@@ -97,7 +97,15 @@ Swagger с описанием всех эндпоинтов: http://localhost:80
 | `analyst` | весь кокпит, без лаборатории | + `/api/strategies` |
 | `admin` | кокпит + лаборатория версий | + `/api/lab/*` |
 
-При пустой таблице пользователей сервер заводит их из `AUTH_USERS="email:пароль:роль,..."`. Если переменной нет, заводятся демо-пользователи `manager@cockpit.demo` / `analyst@…` / `admin@…` с паролем, равным роли. **Для стенда задайте свои**: `AUTH_USERS` и `AUTH_SECRET` в `.env`. Завести пользователя или сменить пароль и роль:
+При пустой таблице пользователей сервер заводит их из `AUTH_USERS="email:пароль:роль,..."`. Если переменной нет, заводятся демо-пользователи (пароль равен роли):
+
+| email | пароль | роль |
+|---|---|---|
+| `manager@cockpit.demo` | `manager` | manager |
+| `analyst@cockpit.demo` | `analyst` | analyst |
+| `admin@cockpit.demo` | `admin` | admin |
+
+**Для стенда задайте свои**: `AUTH_USERS` и `AUTH_SECRET` в `.env`. Завести пользователя или сменить пароль и роль:
 ```bash
 python3 auth.py add boss@corp.ru 'пароль' manager
 ```

@@ -50,7 +50,7 @@ function Login({ onIn }: { onIn: (u: User) => void }) {
         <Form onSubmit={submit} className="flex flex-col gap-4">
           <TextField name="email" type="email" isRequired autoComplete="username" autoFocus>
             <Label>Email</Label>
-            <Input placeholder="manager@cockpit.demo" />
+            <Input placeholder="name@company.ru" />
           </TextField>
           <TextField name="password" type="password" isRequired autoComplete="current-password">
             <Label>Пароль</Label>
