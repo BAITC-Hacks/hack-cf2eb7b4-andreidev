@@ -1,9 +1,15 @@
 # пакет организаторов — не коммитим, коммитим только своё
-beeline_case_participants/*
-!beeline_case_participants/agent.py
-!beeline_case_participants/stress_eval.py
-!beeline_case_participants/requirements.txt
-!beeline_case_participants/submission.csv
+PARTICIPANT_GUIDE.*
+agent_template.py
+environment.py
+local_eval.py
+make_submission.py
+mock_environment.py
+scoring_core.py
+customer_profile.csv
+feature_dictionary.csv
+tariff_dictionary.csv
+data/
 __pycache__/
 .DS_Store
 .env
