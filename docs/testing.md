@@ -17,7 +17,7 @@ python stress_eval.py --struct       # миры с системной ошибк
 python stress_eval.py --prior-cv     # CatBoost-prior против группового среднего: K-fold по ID
 python stress_eval.py --prior-debug  # важности признаков, крупнейшие сдвиги μ и их SHAP-причины
 ```
-Что показали эти прогоны — [experiments.md](experiments.md).
+Что показали эти прогоны — [experiments.md](experiments.md), CatBoost-prior — [catboost.md](catboost.md).
 
 ## Self-check'и кокпита
 Нужен Postgres (`docker compose up -d db`). Каждый работает во временной схеме БД и не трогает рабочие данные.

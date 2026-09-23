@@ -109,6 +109,7 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 | [Архитектура](docs/architecture.md) | модули, поток данных, файлы пакета среды, структура фронтенда |
 | [Как работает агент](docs/agent.md) | ключевое наблюдение, prior, эксперты, EI-пилоты, план, fallback, честная игра |
 | [Настройки](docs/configuration.md) | переменные окружения и константы `agent.py` |
+| [CatBoost-prior](docs/catboost.md) | опциональный ML-prior: зачем, как устроен, как включить, почему выключен |
 | [Данные и эксперименты](docs/experiments.md) | что показали данные, стресс-миры, ablation, отброшенные идеи |
 | [Проверка](docs/testing.md) | `local_eval`, `stress_eval`, self-check'и кокпита |
 | [Campaign Cockpit](docs/cockpit.md) | экраны, роли и доступ к API, Swagger, хранилище |

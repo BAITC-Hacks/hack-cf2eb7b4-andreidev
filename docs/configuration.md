@@ -54,6 +54,8 @@
 | `LLM_FIELDS` | `ARPU_3m_avg`, `DATA_VOLUME`, `OUT_LOC_OFFNET_MIN` | allowlist полей для LLM |
 
 ### CatBoost-prior (выключен)
+Подробно — [catboost.md](catboost.md).
+
 | Константа | По умолчанию | Смысл |
 |---|---|---|
 | `PRIOR_MODEL` | `hist` | `catboost_shift` / `catboost_full` |
