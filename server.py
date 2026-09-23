@@ -61,7 +61,13 @@ app = FastAPI(title="Beeline campaign cockpit", version="1.0", description=API_D
 db.init()
 auth.bootstrap()
 ANY, ANALYST, ADMIN = (auth.require(*r) for r in (db.ROLES, ("analyst", "admin"), ("admin",)))
-app.include_router(auth.fastapi_users.get_auth_router(auth.backend), prefix="/api/auth", tags=["auth"])
+auth_router = auth.fastapi_users.get_auth_router(auth.backend)
+for r in auth_router.routes:  # названия fastapi-users («Auth:Cookie.Login») → по-русски
+    r.summary, r.description = {
+        "/login": ("Вход", "Форма: `username` = email, `password`. 204 ставит cookie `session`, 400 — неверные данные."),
+        "/logout": ("Выход", "Отзывает текущую сессию и стирает cookie."),
+    }[r.path]
+app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 
 
 @app.get("/api/me", response_model=auth.UserRead, tags=["auth"], summary="Текущий пользователь")
@@ -361,6 +367,7 @@ if __name__ == "__main__":
     from fastapi.testclient import TestClient
     spec = TestClient(app).get("/api/openapi.json").json()
     assert {p["name"]: p.get("description") for p in spec["paths"]["/api/run"]["get"]["parameters"]}["world"], "swagger"
+    assert spec["paths"]["/api/auth/login"]["post"]["summary"] == "Вход", "swagger: login"
     sub = pd.read_csv("submission.csv")["campaign_name"].tolist()
     print("plan == submission.csv:", [c["campaign_name"] for c in r["plan"]] == sub)
     print(f"ok: {len(r['arms'])} arms, {len(r['pilots'])} pilots, {len(r['plan'])} campaigns, "
