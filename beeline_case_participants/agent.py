@@ -234,7 +234,9 @@ class Agent:
         names = sorted(ch, key=lambda c: ch[c]["cost_per_contact"])  # push, sms, ads, call
         picks = []
         for (cur, seg), c in cells.items():
-            cand = [(a["mu"], a["var"], k[2]) for k, a in arms.items() if k[:2] == (cur, seg)]
+            # гипотеза без истории (только LLM) идёт в план лишь после пилота: догадке модели на слово не верим
+            cand = [(a["mu"], a["var"], k[2]) for k, a in arms.items()
+                    if k[:2] == (cur, seg) and ("prior" in a.get("src", ("prior",)) or a["n"])]
             if not cand:
                 continue
             mu, var, target = max(cand)

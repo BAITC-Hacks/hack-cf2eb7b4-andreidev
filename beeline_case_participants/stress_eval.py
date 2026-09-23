@@ -7,6 +7,7 @@
 и ablation экспертов: только prior против full (prior + llm, если есть OPENAI_API_KEY).
 """
 
+import functools
 import json
 import os
 import sys
@@ -35,6 +36,8 @@ def world(seed):
 
 
 class PriorOnly(agent.Agent):
+    experts = ("prior",)  # эталоны не зовут LLM
+
     def _explore(self, env, cells, arms):
         pass
 
@@ -47,6 +50,8 @@ def make_oracle(model):
     fc = model["conversion_rate"].median()
 
     class Oracle(agent.Agent):
+        experts = ("prior",)
+
         def _explore(self, env, cells, arms):
             arms.clear()
             for (cur, seg), c in cells.items():
@@ -128,6 +133,8 @@ if __name__ == "__main__":
     check_llm()
     if not os.environ.get("OPENAI_API_KEY"):
         print("нет OPENAI_API_KEY: agent (full) = exp_prior")
+    # ponytail: промпт одинаков на всех seed (профиль тот же) — один ответ LLM на прогон
+    agent._llm_call = functools.lru_cache(agent._llm_call)
     runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 10
     rows = []
     for seed in range(runs):

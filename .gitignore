@@ -6,3 +6,4 @@ beeline_case_participants/*
 !beeline_case_participants/submission.csv
 __pycache__/
 .DS_Store
+.env
