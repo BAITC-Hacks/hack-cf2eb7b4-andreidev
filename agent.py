@@ -43,7 +43,7 @@ LLM_CLIP = 0.5      # |base| из истории почти всегда < 0.35;
 PILOT_FRAC = 0.08   # размер пилота — доля ячейки в пределах [PILOT_MIN, PILOT_MAX]
 PILOT_MIN = 60
 PILOT_MAX = 200
-# Флаги ниже по умолчанию выключены (= поведение, проверенное в README). Включает их версия
+# Флаги ниже по умолчанию выключены (= поведение, проверенное в docs/experiments.md). Включает их версия
 # из lab.py, только если прошла benchmark gate на стресс-мирах.
 PILOT_SIZING = "fixed"      # "adaptive": большой пилот только спорным рукавам, уверенные не перепроверяем
 PILOT_BUDGET_SHARE = 1.0    # доля бюджета, которую можно потратить на пилоты
@@ -367,7 +367,7 @@ class Agent:
         return self._fallback(env, arms)
 
     # --- гипотезы: портфель экспертов ------------------------------------
-    experts = ("prior", "llm")  # heuristic (upsell по пакету) пробовали — хуже минимум, см. README
+    experts = ("prior", "llm")  # heuristic (upsell по пакету) пробовали — хуже минимум, см. docs/experiments.md
 
     def _arms(self, env):
         p = env.customer_profile

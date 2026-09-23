@@ -367,7 +367,7 @@ export function Docs({ role, tabs = [], onOpen }: { role: Role; tabs?: DocTab[];
             </Section>
           </div>
         ))}
-        <p className="flex items-center gap-2 text-xs text-muted"><Cog className="size-3.5" aria-hidden />Подробности алгоритма и замеры — в README.md репозитория.</p>
+        <p className="flex items-center gap-2 text-xs text-muted"><Cog className="size-3.5" aria-hidden />Подробности алгоритма и замеры — в docs/ репозитория (agent.md, experiments.md).</p>
       </div>
     </div>
   )
