@@ -18,9 +18,53 @@
    python local_eval.py --runs 10    # устойчивость: все 10 прогонов в плюс
    python make_submission.py         # пересобирает submission.csv; должен совпасть с закоммиченным (git diff пуст)
    ```
-4. **UI (по желанию):** `docker compose up --build` → http://localhost:8000, вход `manager@cockpit.demo` / `manager` → «Сформировать план». Подробнее — [docs/cockpit.md](docs/cockpit.md).
+4. **UI (по желанию):** см. «Сборка и запуск UI» ниже.
 
-LLM-ключ не обязателен: без него LLM-эксперт выключается, и агент работает на истории и пилотах.
+LLM-ключ не обязателен: без него LLM-эксперт выключается, и агент работает на истории и пилотах. Ключи и прочие настройки кладутся в `.env` в корне репо (см. [docs/configuration.md](docs/configuration.md)):
+```bash
+OPENROUTER_API_KEY=...        # или OPENAI_API_KEY=...
+LLM_MODEL=openai/gpt-4o-mini
+```
+
+## Сборка и запуск UI (Campaign Cockpit)
+Пакет организаторов должен лежать в корне репо (шаг 1 быстрого старта): в образ он попадает из рабочей копии.
+
+**Docker — одной командой** (Postgres + API + собранный фронт на одном порту):
+```bash
+docker compose up --build     # сборка образа и запуск → http://localhost:8000
+docker compose down           # остановить; данные остаются в томах pgdata и uploads
+```
+
+**Локально для разработки** (hot reload фронта):
+```bash
+pip install -r requirements.txt fastapi uvicorn "fastapi-users[sqlalchemy]" "psycopg[binary]"
+docker compose up -d db                           # только Postgres на 127.0.0.1:5432
+AUTH_DEMO=1 uvicorn server:app --port 8000        # API из корня репо
+cd web && npm ci && npm run dev                   # http://localhost:5173, /api проксируется на :8000
+```
+
+**Локально со сборкой фронта** (собранный фронт отдаёт сам API; Postgres и pip-зависимости — как в блоке выше):
+```bash
+cd web && npm ci && npm run build && cd ..        # tsc + vite build → web/dist
+AUTH_DEMO=1 uvicorn server:app --port 8000        # http://localhost:8000
+```
+
+Swagger: http://localhost:8000/api/docs. Self-check'и и тесты — [docs/testing.md](docs/testing.md).
+
+## Вход
+При пустой таблице пользователей и `AUTH_DEMO=1` (по умолчанию в `docker compose`) заводятся демо-пользователи, пароль равен роли:
+
+| Роль | Email | Пароль | Что видит |
+|---|---|---|---|
+| manager | `manager@cockpit.demo` | `manager` | «Сформировать план» → таблица кампаний → CSV |
+| analyst | `analyst@cockpit.demo` | `analyst` | весь кокпит без лаборатории |
+| admin | `admin@cockpit.demo` | `admin` | кокпит + лаборатория версий и загрузка базовых выгрузок |
+
+Свой пользователь или смена пароля и роли:
+```bash
+python3 auth.py add boss@corp.ru 'пароль' manager
+```
+**На стенде демо-пароли не используйте:** задайте в `.env` `AUTH_DEMO=0`, `AUTH_USERS="email:пароль:роль,..."` и `AUTH_SECRET`. Без `AUTH_USERS` и `AUTH_DEMO=1` сервер на пустой таблице не стартует. Подробнее — [SECURITY.md](SECURITY.md).
 
 ## Архитектура
 ```
@@ -56,7 +100,7 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 | [Настройки](docs/configuration.md) | переменные окружения и константы `agent.py` |
 | [Данные и эксперименты](docs/experiments.md) | что показали данные, стресс-миры, ablation, отброшенные идеи |
 | [Проверка](docs/testing.md) | `local_eval`, `stress_eval`, self-check'и кокпита |
-| [Campaign Cockpit](docs/cockpit.md) | запуск UI, экраны, роли и вход, хранилище |
+| [Campaign Cockpit](docs/cockpit.md) | экраны, роли и доступ к API, Swagger, хранилище |
 | [Новые данные](docs/data.md) | база знаний, CSV итогов кампаний, базовые выгрузки |
 | [Лаборатория версий](docs/lab.md) | матрица тестов, детекторы, ремедиация, gate, promote, privacy gateway |
 | [Безопасность](SECURITY.md) | защита API и UI, чек-лист выкладки |
