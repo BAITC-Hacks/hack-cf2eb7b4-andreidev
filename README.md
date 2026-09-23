@@ -117,6 +117,6 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 ## Сторонние компоненты
 Код в репозитории разработан во время соревновательной части. Использованы:
 - **пакет участника от организаторов** (в git не входит): среда `environment.py` / `mock_environment.py`, `scoring_core.py`, `local_eval.py`, `make_submission.py`, синтетические данные;
-- **open-source библиотеки** по их лицензиям: pandas, numpy (BSD), CatBoost (Apache 2.0), FastAPI, fastapi-users, Uvicorn (MIT / BSD), SQLAlchemy, psycopg (MIT / LGPL), React, Vite, HeroUI (MIT), PostgreSQL (PostgreSQL License). Полный список фронтенда — в `web/package.json`;
+- **open-source библиотеки** по их лицензиям: pandas, numpy (BSD), CatBoost (Apache 2.0), FastAPI, fastapi-users, Uvicorn (MIT / BSD), SQLAlchemy, psycopg (MIT / LGPL), React, Vite, HeroUI (MIT), PostgreSQL (PostgreSQL License); для десктопа — Tauri v2 (MIT / Apache 2.0), PyInstaller (GPL с исключением для сборок), aiosqlite (MIT), SQLite (public domain). Полный список фронтенда — в `web/package.json`, Rust-зависимостей — в `desktop/src-tauri/Cargo.toml`;
 - **внешняя модель:** `gpt-4o-mini` через OpenAI или OpenRouter — только как эксперт-источник гипотез; в неё уходят агрегаты по ячейкам, без строк абонентов;
 - **AI-ассистенты** при разработке (разрешено п. 5.4.12 Положения).
