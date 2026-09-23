@@ -12,6 +12,7 @@ API для UI (web/): запускает агента в мок- или стре
 import functools
 import math
 import os
+import time
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +21,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from typing import Literal
 
-from fastapi import Body, Depends, FastAPI, File, HTTPException, Path as PathParam, Query, UploadFile
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Path as PathParam, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 _env_file = Path(__file__).parent / ".env"
@@ -76,6 +78,29 @@ for r in auth_router.routes:  # названия fastapi-users («Auth:Cookie.Lo
     }[r.path]
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 
+LOGIN_MAX, LOGIN_WINDOW = 10, 300  # неудачных входов с одного IP за 5 минут → 429
+_login_fails: dict[str, list[float]] = {}
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    """Лимит неудачных входов + заголовки против clickjacking и MIME-sniffing."""
+    # ponytail: счётчик в памяти процесса; за прокси без X-Forwarded-For все клиенты — один IP; Redis при нескольких воркерах
+    login = request.method == "POST" and request.url.path == "/api/auth/login"
+    if login:
+        ip, now = request.client.host if request.client else "?", time.monotonic()
+        fails = [t for t in _login_fails.pop(ip, ()) if now - t < LOGIN_WINDOW]
+        if fails:
+            _login_fails[ip] = fails
+        if len(fails) >= LOGIN_MAX:
+            return JSONResponse({"detail": "слишком много попыток входа, повторите через несколько минут"}, 429)
+    resp = await call_next(request)
+    if login and resp.status_code == 400:
+        _login_fails.setdefault(ip, []).append(now)
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    return resp
+
 
 @app.get("/api/me", response_model=auth.UserRead, tags=["auth"], summary="Текущий пользователь")
 def api_me(user: db.User = Depends(auth.current_user)):
@@ -115,7 +140,7 @@ def _model(world, seed):
     return se.world(seed) if world == "stress" else _mock_impact_model(se.history)
 
 
-# пресеты OpenRouter для селектора в UI; slug вне списка тоже принимается
+# пресеты OpenRouter для селектора в UI; slug вне списка принимается от analyst и admin
 MODELS = ("deepseek/deepseek-v4-flash", "google/gemini-3.8-flash", "openai/gpt-4o-mini",
           "anthropic/claude-haiku-4.5", "openai/gpt-5.4-mini", "moonshotai/kimi-k2.6")
 
@@ -449,7 +474,7 @@ class RunOut(_M):
     privacy: Privacy
 
 
-@app.get("/api/run", dependencies=[Depends(ANY)], tags=["agent"], summary="Прогон агента",
+@app.get("/api/run", tags=["agent"], summary="Прогон агента",
          responses={200: {"model": RunOut}})
 def api_run(seed: int = Query(42, description="seed среды: выборка пилотов и, для `stress`, искажение эффектов"),
             world: str = Query("mock", pattern="^(mock|stress)$",
@@ -457,10 +482,13 @@ def api_run(seed: int = Query(42, description="seed среды: выборка �
             llm: bool = Query(True, description="включить LLM-эксперта (нужен ключ OpenRouter/OpenAI на сервере)"),
             model: str | None = Query(None, max_length=100, pattern=r"^[\w.\-/:]+$",
                                       description=f"slug модели OpenRouter; пресеты: {', '.join(MODELS)}"),
-            feedback: bool = Query(True, description="учесть базу знаний: прошлые пилоты и итоги кампаний этого мира")):
+            feedback: bool = Query(True, description="учесть базу знаний: прошлые пилоты и итоги кампаний этого мира"),
+            user: db.User = Depends(ANY)):
     """Запускает агента и возвращает его состояние: `arms` (prior/posterior рукавов), `pilots`, `replay`
     (снимок перед каждым пилотом), `plan` (≤10 кампаний), `score`, `log`, `llm_audit`, `privacy`.
-    Результат кешируется по параметрам. Любая роль."""
+    Результат кешируется по параметрам. Любая роль; manager — только модели из пресетов (платные вызовы)."""
+    if model and user.role == "manager" and model not in MODELS:
+        raise HTTPException(403, "manager может выбрать только модель из пресетов")
     return run_payload(seed, world, llm, model, feedback)
 
 
@@ -538,13 +566,17 @@ def lab_versions():
     return {"versions": [_slim(v, cur) for v in lab.versions()], "pending": lab._q.unfinished_tasks}
 
 
+def _load(vid):
+    try:
+        return lab.load(vid)
+    except FileNotFoundError:
+        raise HTTPException(404, f"нет версии {vid}")
+
+
 @app.get("/api/lab/versions/{vid}", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Версия целиком")
 def lab_version(vid: str):
     """Конфиг, прогоны тестов и аудит версии `vid` (например `v001`). 404, если нет."""
-    try:
-        return {**lab.load(vid), "current": vid == lab.current_id()}
-    except FileNotFoundError:
-        raise HTTPException(404, f"нет версии {vid}")
+    return {**_load(vid), "current": vid == lab.current_id()}
 
 
 @app.post("/api/lab/versions", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Создать версию")
@@ -565,7 +597,8 @@ def lab_create(body: dict = Body(..., examples=[{"parent_id": "v001", "changes":
 
 @app.post("/api/lab/versions/{vid}/evaluate", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Переоценить")
 def lab_evaluate(vid: str):
-    """Ставит версию в очередь на повторный прогон тестов; результат — в `GET /api/lab/versions/{vid}`."""
+    """Ставит версию в очередь на повторный прогон тестов; результат — в `GET /api/lab/versions/{vid}`. 404, если нет."""
+    _load(vid)
     lab.mark_evaluating(vid)
     lab.enqueue(lab.evaluate, vid)
     return {"queued": vid}
@@ -574,6 +607,7 @@ def lab_evaluate(vid: str):
 @app.post("/api/lab/versions/{vid}/remediate", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Автопочинка")
 def lab_remediate(vid: str, steps: int = Query(1, ge=1, le=3, description="сколько шагов починки подряд")):
     """В фоне: предлагает дочернюю версию, исправляющую провалы `vid`, и оценивает её; прошла gate — следующий шаг от неё."""
+    _load(vid)
     lab.enqueue(lab.remediate, vid, steps)
     return {"queued": vid, "steps": steps}
 
@@ -581,7 +615,8 @@ def lab_remediate(vid: str, steps: int = Query(1, ge=1, le=3, description="ск�
 @app.post("/api/lab/versions/{vid}/promote", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Сделать активной")
 def lab_promote(vid: str):
     """Записывает константы версии в `agent.py`, пересобирает `submission.csv`, применяет их в этом процессе и сбрасывает
-    кеш прогонов. 400 — версия не в статусе `candidate`."""
+    кеш прогонов. 400 — версия не в статусе `candidate`, 404 — нет версии."""
+    _load(vid)
     try:
         v = lab.promote(vid)
     except ValueError as e:

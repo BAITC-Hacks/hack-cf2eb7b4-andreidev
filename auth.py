@@ -81,11 +81,13 @@ def add_user(email, password, role):
 
 
 def bootstrap():
-    """Пустая таблица → пользователи из AUTH_USERS="email:пароль:роль,..." или демо-набор."""
+    """Пустая таблица → пользователи из AUTH_USERS="email:пароль:роль,..." или демо-набор (только при AUTH_DEMO=1)."""
     with Session(db.engine) as s:
         if s.scalar(select(func.count()).select_from(db.User)):
             return
     spec = os.environ.get("AUTH_USERS", "").strip()
+    if not spec and os.environ.get("AUTH_DEMO") != "1":  # пароль = роль нельзя завести на выкладке случайно
+        raise RuntimeError("auth: пустая таблица пользователей — задайте AUTH_USERS или AUTH_DEMO=1 для демо-входа")
     rows = [(x.split(":", 1)[0], *x.split(":", 1)[1].rsplit(":", 1)) for x in spec.split(",") if x.strip()] if spec \
         else [(f"{r}@cockpit.demo", r, r) for r in db.ROLES]
     if not spec:
@@ -103,6 +105,7 @@ if __name__ == "__main__":
     db.use_schema("test_auth")
     db.drop_schema()
     os.environ.pop("AUTH_USERS", None)
+    os.environ["AUTH_DEMO"] = "1"
     from fastapi.testclient import TestClient
     import server  # поднимает схему, демо-пользователей и baseline лаборатории
 

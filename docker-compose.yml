@@ -2,7 +2,7 @@ services:
   db:
     image: postgres:17-alpine
     environment: { POSTGRES_USER: cockpit, POSTGRES_PASSWORD: cockpit, POSTGRES_DB: cockpit }
-    ports: ["5432:5432"]                        # для локального dev: uvicorn вне docker ходит сюда же
+    ports: ["127.0.0.1:5432:5432"]              # только с этой машины: uvicorn вне docker ходит сюда же
     volumes: ["pgdata:/var/lib/postgresql/data"] # пользователи, сессии, версии лаборатории
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "cockpit"]
@@ -15,6 +15,7 @@ services:
     environment:
       DATABASE_URL: postgresql://cockpit:cockpit@db:5432/cockpit
       AUTH_SECRET: ${AUTH_SECRET:-dev-secret-change-me}
+      AUTH_DEMO: ${AUTH_DEMO:-1}                  # демо-вход <роль>@cockpit.demo / <роль>; на выкладке AUTH_DEMO=0 + AUTH_USERS
       # AUTH_USERS: "boss@corp.ru:пароль:manager,ann@corp.ru:пароль:analyst" — заводятся при пустой таблице
     volumes: ["uploads:/app/uploads"]             # загруженные выгрузки (datasets.py)
     depends_on:

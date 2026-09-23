@@ -58,7 +58,8 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 | `LLM_MODEL` | агент | `openai/gpt-4o-mini` | модель OpenRouter |
 | `DATABASE_URL` | UI | `postgresql://cockpit:cockpit@localhost:5432/cockpit` | Postgres |
 | `DB_SCHEMA` | UI | `public` | схема БД (разводит стенды) |
-| `AUTH_USERS` | UI | демо-пользователи | `email:пароль:роль,...`, заводятся при пустой таблице |
+| `AUTH_USERS` | UI | — | `email:пароль:роль,...`, заводятся при пустой таблице |
+| `AUTH_DEMO` | UI | `1` в docker compose | `1` — без `AUTH_USERS` завести демо-пользователей; иначе сервер не стартует на пустой таблице |
 | `AUTH_SECRET` | UI | `dev-secret-change-me` | секрет сессий; на стенде задайте свой |
 | `UPLOAD_DIR` | UI | `uploads/` | куда кладутся загруженные выгрузки (в docker — volume) |
 
@@ -170,7 +171,7 @@ Swagger с описанием всех эндпоинтов: http://localhost:80
 | `analyst` | весь кокпит, без лаборатории | + `/api/strategies`, `/api/data`, `/api/feedback/run` |
 | `admin` | кокпит + лаборатория версий | + `/api/lab/*`, загрузка базовых выгрузок |
 
-При пустой таблице пользователей сервер заводит их из `AUTH_USERS="email:пароль:роль,..."`. Если переменной нет, заводятся демо-пользователи (пароль равен роли):
+При пустой таблице пользователей сервер заводит их из `AUTH_USERS="email:пароль:роль,..."`. Если переменной нет и `AUTH_DEMO=1` (так по умолчанию в `docker compose`), заводятся демо-пользователи (пароль равен роли); без обеих сервер не стартует:
 
 | email | пароль | роль |
 |---|---|---|
@@ -178,7 +179,7 @@ Swagger с описанием всех эндпоинтов: http://localhost:80
 | `analyst@cockpit.demo` | `analyst` | analyst |
 | `admin@cockpit.demo` | `admin` | admin |
 
-**Для стенда задайте свои**: `AUTH_USERS` и `AUTH_SECRET` в `.env`. Завести пользователя или сменить пароль и роль:
+**Для стенда задайте свои**: `AUTH_USERS`, `AUTH_SECRET` и `AUTH_DEMO=0` в `.env`. Вход ограничен 10 неудачными попытками с IP за 5 минут (429), manager выбирает модель LLM только из пресетов. Подробно о защите и чек-лист выкладки — [SECURITY.md](SECURITY.md). Завести пользователя или сменить пароль и роль:
 ```bash
 python3 auth.py add boss@corp.ru 'пароль' manager
 ```

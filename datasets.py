@@ -76,6 +76,10 @@ def validate(kind, df):
         bad(~(n > 0) | (n != n.round()), "n: не целое > 0")
         bad(~lift.between(-1, 3), "lift_ratio: не число в [-1, 3]")
         bad(df["cur"] == df["target"], "target совпадает с cur")
+        if "world" in df:  # иначе длинная строка падает в БД (String(32)) с 500
+            bad(~df["world"].fillna("mock").astype(str).str.fullmatch(r"mock|stress:\d{1,9}"), "world: не mock / stress:<seed>")
+        if "source" in df:
+            bad(~df["source"].fillna("campaign").isin(("campaign", "pilot")), "source: не campaign / pilot")
     return errs[:MAX_ERRORS]
 
 
@@ -190,6 +194,11 @@ if __name__ == "__main__":
                                                  b"tariff_8,XXL,nope,fax,-3,9\n"))
         assert len(errs) == 5, errs
         assert validate("campaign_results", read(b"cur,seg\ntariff_8,MID\n"))[0].startswith("нет колонок")
+        assert validate("campaign_results", read(good.replace("\n", ",world,source\n", 1)
+                                                 .replace("0.4\n", "0.4,stress:3,pilot\n").encode())) == []
+        errs = validate("campaign_results", read(good.replace("\n", ",world,source\n", 1)
+                                                 .replace("0.4\n", f"0.4,{'w' * 40},{'s' * 20}\n").encode()))
+        assert len(errs) == 2 and errs[0].startswith("world") and errs[1].startswith("source"), errs
         try:
             save("campaign_results", b"\xff\xfe\x00", "t")
             raise AssertionError("мусор принят")
