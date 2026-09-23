@@ -6,7 +6,7 @@
 → новая draft-версия → та же матрица → gate против родителя → candidate/failed.
 Promote — только по кнопке: константы переписываются в agent.py, submission.csv пересобирается.
 
-    python3 lab.py      # self-check (во временной папке, быстрая матрица)
+    python3 lab.py      # self-check (во временной схеме Postgres, быстрая матрица)
 """
 
 import ast
@@ -26,11 +26,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 import agent
+import db
 
 ROOT = Path(__file__).parent
-LAB = Path(os.environ.get("LAB_DIR", ROOT / "lab"))
 QUICK = os.environ.get("LAB_QUICK") == "1"
 SEEDS = list(range(2 if QUICK else 10))
 # главное семейство gate — больше миров: на 10 один мир около нуля решал исход «прогонов в минусе больше»
@@ -153,20 +155,21 @@ def _now():
 
 
 def load(vid):
-    return json.loads((LAB / "versions" / f"{vid}.json").read_text())
+    with Session(db.engine) as s:
+        v = s.get(db.LabVersion, vid)
+    if v is None:
+        raise FileNotFoundError(vid)  # server.py отвечает на это 404
+    return v.data
 
 
 def save(v):
     with _lock:
-        (LAB / "versions").mkdir(parents=True, exist_ok=True)
-        tmp = LAB / "versions" / f"{v['id']}.json.tmp"
-        tmp.write_text(json.dumps(v, ensure_ascii=False, default=float))
-        tmp.replace(LAB / "versions" / f"{v['id']}.json")
+        db.upsert(db.LabVersion, id=v["id"], data=v)
 
 
 def versions():
-    d = LAB / "versions"
-    return [json.loads(p.read_text()) for p in sorted(d.glob("v*.json"))] if d.exists() else []
+    with Session(db.engine) as s:
+        return [r.data for r in s.scalars(select(db.LabVersion).order_by(db.LabVersion.id))]
 
 
 def current_id():
@@ -193,7 +196,7 @@ def create(parent_id, changes, created_by="human", kind="manual", **meta):
             "status": "draft", "promoted": False, "promoted_at": None, "rejected_changes": errors,
             "hypothesis": meta.get("hypothesis", ""), "rationale": meta.get("rationale", ""),
             "expected_benefit": meta.get("expected_benefit", ""), "issues_addressed": meta.get("issues_addressed", []),
-            "template": meta.get("template"), "tests": [], "metrics": {}, "runs": [], "issues": [], "gate": None, "audit": [],
+            "template": meta.get("template"), "author": meta.get("author"), "tests": [], "metrics": {}, "runs": [], "issues": [], "gate": None, "audit": [],
         }
         save(v)
         return v
@@ -214,19 +217,20 @@ class _Traced(agent.Agent):
         super()._explore(env, cells, arms)
 
 
-def _disk_cached(call):
+def _db_cached(call):
     """
     Один ответ LLM на промпт для всей лаборатории. Без этого gate сравнивал бы шум модели:
     тот же конфиг давал медиану стресс-миров 6.57M и 7.06M в двух прогонах.
     Версии с другим промптом (LLM_PROMPT_EXTRA, PRIVACY_MODE…) получают свой ответ.
     """
     def f(prompt, model=None):
-        p = LAB / "llm_cache" / f"{_sha(prompt if model is None else model + prompt)}.txt"
-        if p.exists():
-            return p.read_text()
+        key = _sha(prompt if model is None else model + prompt)
+        with Session(db.engine) as s:
+            hit = s.get(db.LlmCache, key)
+        if hit:
+            return hit.response
         out = call(prompt, model)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(out)
+        db.upsert(db.LlmCache, key=key, response=out)
         return out
     return f
 
@@ -234,7 +238,8 @@ def _disk_cached(call):
 def _init_worker():
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))
-    agent._llm_call = functools.lru_cache(_disk_cached(agent._llm_call))
+    db.engine.dispose(close=False)  # при fork соединения родителя не делим
+    agent._llm_call = functools.lru_cache(_db_cached(agent._llm_call))
 
 
 def _apply(config):
@@ -339,14 +344,13 @@ def pool():
 
 
 def template_nets():
-    f = LAB / "template.json"
-    cache = json.loads(f.read_text()) if f.exists() else {}
-    miss = [s for s in SEEDS if str(s) not in cache]
+    with Session(db.engine) as ses:
+        cache = {r.seed: r.data for r in ses.scalars(select(db.TemplateNet))}
+    miss = [s for s in SEEDS if s not in cache]
     for s, r in zip(miss, pool().map(run_template, miss)):
-        cache[str(s)] = r
-    LAB.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(cache))
-    return [cache[str(s)] for s in SEEDS]
+        db.upsert(db.TemplateNet, seed=s, data=r)
+        cache[s] = r
+    return [cache[s] for s in SEEDS]
 
 
 def _stats(xs):
@@ -586,9 +590,8 @@ def propose(parent):
             audit[-1]["rejected"] = [{"row": e, "reason": "validate"} for e in errors]
         except Exception as e:  # LLM недоступен или ответил мусором — остаётся шаблон
             meta["rationale"] += f" (LLM: {type(e).__name__})"
-        with (LAB / "audit.jsonl").open("a") as f:
-            for r in audit:
-                f.write(json.dumps({**r, "parent_id": parent["id"], "at": _now()}, ensure_ascii=False) + "\n")
+        with Session(db.engine) as s, s.begin():
+            s.add_all(db.LabAudit(data={**r, "parent_id": parent["id"], "at": _now()}) for r in audit)
     v = create(parent["id"], ch, kind="auto", issues_addressed=[i["code"] for i in issues if not meta["template"] or meta["template"] in i["templates"]],
                **meta)
     return v
@@ -699,7 +702,6 @@ def mark_evaluating(vid):
 
 
 if __name__ == "__main__":
-    import tempfile
     # validate: чужие ключи отсекаются, значения клипуются
     c, e = validate({"LCB_K": 9, "PILOT_SIZING": "wild", "evil": 1, "USE_LLM": "false"})
     assert c == {"LCB_K": 1.5, "USE_LLM": False} and len(e) == 2, (c, e)
@@ -732,7 +734,9 @@ if __name__ == "__main__":
     # быстрая матрица на baseline + один шаг ремедиации (без LLM)
     os.environ.pop("OPENAI_API_KEY", None)
     os.environ.pop("OPENROUTER_API_KEY", None)
-    LAB = Path(tempfile.mkdtemp())
+    db.use_schema("test_lab")  # воркеры пула наследуют схему через env
+    db.drop_schema()
+    db.init()
     SEEDS, PRIMARY_SEEDS = SEEDS[:2], PRIMARY_SEEDS[:2]
     ensure_baseline()
     v1 = evaluate("v001")
@@ -743,3 +747,4 @@ if __name__ == "__main__":
     print(f"ok: v001 harsh0 {_m(v1['metrics']['harsh0']['median'])}, stress {_m(v1['metrics']['stress']['median'])}, issues {[i['code'] for i in v1['issues']]}; "
           f"{v2['id']} ({v2['hypothesis']}) → {v2['status']} {v2['gate']['reasons']}")
     pool().shutdown()
+    db.drop_schema()

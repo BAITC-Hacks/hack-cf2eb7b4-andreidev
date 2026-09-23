@@ -1,10 +1,11 @@
 import { Alert, Button, Card, Chip, NumberField, Skeleton, Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react'
 import {
-  Bug, Coins, FlaskConical, Gauge, GitBranch, GitCompare, History, Lightbulb, ListChecks, LoaderCircle, Megaphone, Play, Radar,
+  Bug, Calculator, Coins, FlaskConical, Gauge, GitBranch, GitCompare, History, Lightbulb, ListChecks, LoaderCircle, Megaphone, Play, Radar,
   ScrollText, ShieldCheck, Swords, Users, UsersRound, Wrench, type LucideIcon,
 } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useState } from 'react'
-import { fetchRun, type Run, type RunParams, type World } from './api'
+import { fetchRun, type Run, type RunParams, type User, type World } from './api'
+import { UserBadge } from './Auth'
 import { Kpi, fmt, money } from './ui'
 import Command from './tabs/Command'
 import Audience from './tabs/Audience'
@@ -13,6 +14,7 @@ import Pilots from './tabs/Pilots'
 import Strategies from './tabs/Strategies'
 import Plan from './tabs/Plan'
 import Privacy from './tabs/Privacy'
+import Rules from './tabs/Rules'
 import { useLab, type LabState } from './lab/useLab'
 import Versions from './lab/Versions'
 import Compare from './lab/Compare'
@@ -20,7 +22,7 @@ import Runs from './lab/Runs'
 import Issues from './lab/Issues'
 import Fixes from './lab/Fixes'
 
-type TabId = 'command' | 'audience' | 'hypotheses' | 'pilots' | 'plan' | 'strategies' | 'privacy' | 'logs'
+type TabId = 'command' | 'rules' | 'audience' | 'hypotheses' | 'pilots' | 'plan' | 'strategies' | 'privacy' | 'logs'
   | 'versions' | 'compare' | 'runs' | 'issues' | 'fixes'
 // step — место экрана в конвейере агента: аудитория → гипотезы → пилоты → план; lab — экраны лаборатории версий
 const TABS: {
@@ -28,6 +30,7 @@ const TABS: {
   count?: (r: Run) => number; labCount?: (l: LabState) => number
 }[] = [
   { id: 'command', label: 'Командный центр', sub: 'Что делать прямо сейчас', icon: Gauge },
+  { id: 'rules', label: 'Как считается', sub: 'Правила подсчёта', icon: Calculator },
   { id: 'audience', step: 1, label: 'Аудитория', sub: 'Кого можно таргетировать', icon: Users, count: (r) => r.audience.cells.length },
   { id: 'hypotheses', step: 2, label: 'Гипотезы', sub: 'Что предложили эксперты', icon: Lightbulb, count: (r) => r.arms.length },
   { id: 'pilots', step: 3, label: 'Пилоты', sub: 'Что показала проверка', icon: FlaskConical, count: (r) => r.pilots.length },
@@ -43,13 +46,15 @@ const TABS: {
     labCount: (l) => l.versions.filter((v) => v.created_by === 'llm' || v.created_by === 'template').length },
 ]
 
-export default function App() {
+export default function App({ user, onSignOut }: { user: User; onSignOut: () => void }) {
+  const admin = user.role === 'admin'
+  const tabs = TABS.filter((t) => !t.lab || admin)  // лаборатория меняет agent.py — только admin
   const [params, setParams] = useState<RunParams>({ seed: 42, world: 'mock', llm: true, model: '' })
   const [run, setRun] = useState<Run>()
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(false)
   // вкладка живёт в #hash — можно дать ссылку на конкретный экран
-  const [tab, setTabState] = useState<TabId>(() => (TABS.some((t) => t.id === location.hash.slice(1)) ? location.hash.slice(1) as TabId : 'command'))
+  const [tab, setTabState] = useState<TabId>(() => (tabs.some((t) => t.id === location.hash.slice(1)) ? location.hash.slice(1) as TabId : 'command'))
   const setTab = (t: TabId) => { history.replaceState(null, '', `#${t}`); setTabState(t) }
 
   const go = useCallback((p: RunParams) => {
@@ -59,13 +64,13 @@ export default function App() {
   }, [])
   useEffect(() => go(params), []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const current = TABS.find((t) => t.id === tab)!
-  const labState = useLab()
+  const current = tabs.find((t) => t.id === tab)!
+  const labState = useLab(admin)
 
   return (
     <div className="min-h-dvh bg-background lg:pl-64">
       {/* боковая навигация — шаги конвейера агента */}
-      <aside className="border-b border-border bg-surface lg:fixed lg:inset-y-0 lg:left-0 lg:w-64 lg:border-r lg:border-b-0">
+      <aside className="border-b border-border bg-surface lg:fixed lg:inset-y-0 lg:left-0 lg:flex lg:w-64 lg:flex-col lg:border-r lg:border-b-0">
         <div className="flex items-center gap-3 px-5 py-4">
           <span className="grid size-9 place-items-center rounded-xl bg-accent text-accent-foreground"><Radar className="size-5" aria-hidden /></span>
           <div>
@@ -73,13 +78,13 @@ export default function App() {
             <div className="text-xs text-muted">тарифные кампании · AI-агент</div>
           </div>
         </div>
-        <nav aria-label="Экраны" className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-col lg:overflow-visible">
-          {TABS.map((t, i) => {
+        <nav aria-label="Экраны" className="flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-1 lg:flex-col lg:overflow-y-auto">
+          {tabs.map((t, i) => {
             const active = t.id === tab
             const n = t.labCount ? t.labCount(labState) : run && t.count ? t.count(run) : undefined
             return (
               <Fragment key={t.id}>
-              {t.lab && !TABS[i - 1]?.lab && (
+              {t.lab && !tabs[i - 1]?.lab && (
                 <span className="hidden items-center gap-2 px-3 pt-4 pb-1 text-xs font-medium tracking-wide text-muted uppercase lg:flex">
                   Лаборатория{labState.busy && <LoaderCircle className="size-3 animate-spin" aria-label="идут тесты" />}
                 </span>
@@ -104,6 +109,9 @@ export default function App() {
             )
           })}
         </nav>
+        <div className="flex justify-end border-t border-border px-4 py-2 lg:justify-start">
+          <UserBadge user={user} onSignOut={onSignOut} />
+        </div>
       </aside>
 
       <main className="mx-auto flex max-w-[1400px] flex-col gap-5 px-4 py-5 sm:px-6">
@@ -144,6 +152,7 @@ export default function App() {
           <div key={tab + run.params.seed + run.params.world + run.params.llm + run.params.model}
             className={`rise flex flex-col gap-5 transition-opacity ${loading ? 'opacity-60' : ''}`}>
             {tab === 'command' && <><Summary run={run} /><Command run={run} /></>}
+            {tab === 'rules' && <Rules run={run} />}
             {tab === 'audience' && <Audience run={run} />}
             {tab === 'hypotheses' && <Hypotheses run={run} />}
             {tab === 'pilots' && <Pilots run={run} />}

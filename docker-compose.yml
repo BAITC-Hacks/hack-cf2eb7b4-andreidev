@@ -1,6 +1,23 @@
 services:
+  db:
+    image: postgres:17-alpine
+    environment: { POSTGRES_USER: cockpit, POSTGRES_PASSWORD: cockpit, POSTGRES_DB: cockpit }
+    ports: ["5432:5432"]                        # для локального dev: uvicorn вне docker ходит сюда же
+    volumes: ["pgdata:/var/lib/postgresql/data"] # пользователи, сессии, версии лаборатории
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "cockpit"]
+      interval: 2s
+      retries: 15
   app:
     build: .
     ports: ["8000:8000"]
-    env_file: { path: .env, required: false }  # OPENROUTER_API_KEY / LLM_MODEL / OPENAI_API_KEY
-    volumes: ["./lab:/app/lab"]                 # версии лаборатории переживают пересборку
+    env_file: [{ path: .env, required: false }]  # OPENROUTER_API_KEY / LLM_MODEL / OPENAI_API_KEY / AUTH_USERS / AUTH_SECRET
+    environment:
+      DATABASE_URL: postgresql://cockpit:cockpit@db:5432/cockpit
+      AUTH_SECRET: ${AUTH_SECRET:-dev-secret-change-me}
+      # AUTH_USERS: "boss@corp.ru:пароль:manager,ann@corp.ru:пароль:analyst" — заводятся при пустой таблице
+    depends_on:
+      db: { condition: service_healthy }
+
+volumes:
+  pgdata:
