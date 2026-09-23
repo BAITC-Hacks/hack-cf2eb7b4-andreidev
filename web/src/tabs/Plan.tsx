@@ -9,8 +9,13 @@ const CAPS: Record<string, string> = {
   capped_at_money_budget: 'обрезано денежным бюджетом',
 }
 
+/** Хоть одна ячейка кампании не подтверждена пилотом или её нижняя граница ниже нуля */
+export const isRisky = (c: Campaign, arm: Map<string, Arm>) =>
+  c.cells.some((x) => { const a = arm.get(x.cur + x.seg + c.target_tariff); return !a || !a.n || a.post_mu - a.post_sd < 0 })
+export const armIndex = (run: Run) => new Map(run.arms.map((a) => [a.cur + a.seg + a.target, a]))
+
 export default function Plan({ run }: { run: Run }) {
-  const arm = new Map(run.arms.map((a) => [a.cur + a.seg + a.target, a]))
+  const arm = armIndex(run)
   const total = run.plan.reduce((s, c) => s + c.expected_gain - c.expected_cost, 0)
   return (
     <>
@@ -38,7 +43,7 @@ function Step({ icon: Icon, title, children }: { icon: typeof Lightbulb; title: 
 function CampaignCard({ i, c, run, arm }: { i: number; c: Campaign; run: Run; arm: Map<string, Arm> }) {
   const k = run.limits.lcb_k
   const arms = c.cells.map((x) => arm.get(x.cur + x.seg + c.target_tariff))
-  const risky = arms.some((a) => !a || !a.n || a.post_mu - a.post_sd < 0)
+  const risky = isRisky(c, arm)
   const ch = run.channels[c.channel]
   const channels = Object.entries(run.channels).sort((a, b) => a[1].cost_per_contact - b[1].cost_per_contact)
   const net = c.expected_gain - c.expected_cost

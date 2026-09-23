@@ -2,12 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { lab, type Version } from '../api'
 
 // Общее состояние лаборатории: список версий + выбранная версия. Пока что-то тестируется — опрос раз в 2 с.
-export function useLab() {
+export function useLab(enabled = true) {
   const [data, setData] = useState<{ versions: Version[]; pending: number }>()
   const [error, setError] = useState<string>()
   const [sel, setSel] = useState<string>()
   const refresh = useCallback(() => lab.versions().then((d) => { setData(d); setError(undefined) }, (e) => setError(String(e))), [])
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => { if (enabled) refresh() }, [refresh, enabled])
   const versions = data?.versions ?? []
   const busy = !!data && (data.pending > 0 || versions.some((v) => v.status === 'evaluating'))
   useEffect(() => {

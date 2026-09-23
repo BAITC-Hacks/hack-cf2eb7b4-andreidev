@@ -1,7 +1,8 @@
 """
 API для UI (web/): запускает агента в мок- или стресс-мире и отдаёт его внутреннее состояние.
 
-    pip install fastapi uvicorn
+    pip install fastapi uvicorn 'fastapi-users[sqlalchemy]' 'psycopg[binary]'
+    docker compose up -d db            # Postgres: пользователи, сессии, лаборатория
     uvicorn server:app --port 8000
     python3 server.py                  # self-check без сервера
 
@@ -9,14 +10,15 @@ API для UI (web/): запускает агента в мок- или стре
 """
 
 import functools
-import json
 import math
 import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from fastapi import Body, FastAPI, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
 
 _env_file = Path(__file__).parent / ".env"
 if _env_file.exists():  # ponytail: без python-dotenv, формат KEY=VALUE
@@ -26,6 +28,8 @@ if _env_file.exists():  # ponytail: без python-dotenv, формат KEY=VALUE
             os.environ.setdefault(k.strip(), v.strip().strip('"'))
 
 import agent  # noqa: E402
+import auth  # noqa: E402
+import db  # noqa: E402
 import agent_template  # noqa: E402
 import lab  # noqa: E402
 import stress_eval as se  # noqa: E402  (грузит profile / dict_tariff / history)
@@ -35,6 +39,15 @@ from scoring_core import score_campaigns, sanitize_campaigns  # noqa: E402
 
 agent._llm_call = functools.lru_cache(agent._llm_call)  # промпт одинаков для всех seed
 app = FastAPI(title="Beeline campaign cockpit")
+db.init()
+auth.bootstrap()
+ANY, ANALYST, ADMIN = (auth.require(*r) for r in (db.ROLES, ("analyst", "admin"), ("admin",)))
+app.include_router(auth.fastapi_users.get_auth_router(auth.backend), prefix="/api/auth", tags=["auth"])
+
+
+@app.get("/api/me", response_model=auth.UserRead)
+def api_me(user: db.User = Depends(auth.current_user)):
+    return user
 
 
 class Traced(agent.Agent):
@@ -196,13 +209,13 @@ def strategies_payload(runs=5):
                                        "positive": int((df[n] > 0).sum())} for n in names]}
 
 
-@app.get("/api/run")
+@app.get("/api/run", dependencies=[Depends(ANY)])
 def api_run(seed: int = 42, world: str = Query("mock", pattern="^(mock|stress)$"), llm: bool = True,
             model: str | None = Query(None, max_length=100, pattern=r"^[\w.\-/:]+$")):
     return run_payload(seed, world, llm, model)
 
 
-@app.get("/api/strategies")
+@app.get("/api/strategies", dependencies=[Depends(ANALYST)])
 def api_strategies(runs: int = Query(5, ge=1, le=10)):
     return strategies_payload(runs)
 
@@ -216,13 +229,13 @@ def _slim(v, cur):
     return {**{k: x for k, x in v.items() if k not in _SLIM}, "current": v["id"] == cur}
 
 
-@app.get("/api/lab/versions")
+@app.get("/api/lab/versions", dependencies=[Depends(ADMIN)])
 def lab_versions():
     cur = lab.current_id()
     return {"versions": [_slim(v, cur) for v in lab.versions()], "pending": lab._q.unfinished_tasks}
 
 
-@app.get("/api/lab/versions/{vid}")
+@app.get("/api/lab/versions/{vid}", dependencies=[Depends(ADMIN)])
 def lab_version(vid: str):
     try:
         return {**lab.load(vid), "current": vid == lab.current_id()}
@@ -230,10 +243,10 @@ def lab_version(vid: str):
         raise HTTPException(404, f"нет версии {vid}")
 
 
-@app.post("/api/lab/versions")
-def lab_create(body: dict = Body(...)):
+@app.post("/api/lab/versions", dependencies=[Depends(ADMIN)])
+def lab_create(body: dict = Body(...), user: db.User = Depends(ADMIN)):
     try:
-        v = lab.create(body.get("parent_id"), body.get("changes") or {}, created_by="human", kind="manual",
+        v = lab.create(body.get("parent_id"), body.get("changes") or {}, created_by="human", kind="manual", author=user.email,
                        hypothesis=str(body.get("hypothesis") or "")[:300])
     except (ValueError, FileNotFoundError) as e:
         raise HTTPException(400, str(e))
@@ -242,20 +255,20 @@ def lab_create(body: dict = Body(...)):
     return v
 
 
-@app.post("/api/lab/versions/{vid}/evaluate")
+@app.post("/api/lab/versions/{vid}/evaluate", dependencies=[Depends(ADMIN)])
 def lab_evaluate(vid: str):
     lab.mark_evaluating(vid)
     lab.enqueue(lab.evaluate, vid)
     return {"queued": vid}
 
 
-@app.post("/api/lab/versions/{vid}/remediate")
+@app.post("/api/lab/versions/{vid}/remediate", dependencies=[Depends(ADMIN)])
 def lab_remediate(vid: str, steps: int = Query(1, ge=1, le=3)):
     lab.enqueue(lab.remediate, vid, steps)
     return {"queued": vid, "steps": steps}
 
 
-@app.post("/api/lab/versions/{vid}/promote")
+@app.post("/api/lab/versions/{vid}/promote", dependencies=[Depends(ADMIN)])
 def lab_promote(vid: str):
     try:
         v = lab.promote(vid)
@@ -267,24 +280,23 @@ def lab_promote(vid: str):
     return _slim(v, vid)
 
 
-@app.get("/api/lab/targets")
+@app.get("/api/lab/targets", dependencies=[Depends(ADMIN)])
 def lab_targets():
     return {"targets": lab.PATCH_TARGETS, "must": lab.MUST, "thresholds": lab.TH,
             "templates": {k: {"title": t["title"], "issues": t["issues"]} for k, t in lab.TEMPLATES.items()}}
 
 
-@app.get("/api/lab/runs")
+@app.get("/api/lab/runs", dependencies=[Depends(ADMIN)])
 def lab_runs():
     keep = ("test", "world", "seed", "llm", "net", "n_campaigns", "invalid", "crash", "runtime", "fallback", "pilots",
             "pilot_cost", "total_contacts", "log")
     return [{"version": v["id"], **{k: r.get(k) for k in keep}} for v in lab.versions() for r in v.get("runs", [])]
 
 
-@app.get("/api/lab/audit")
+@app.get("/api/lab/audit", dependencies=[Depends(ADMIN)])
 def lab_audit():
-    f = lab.LAB / "audit.jsonl"
-    rows = [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
-    return rows[-50:][::-1]
+    with Session(db.engine) as s:
+        return [r.data for r in s.scalars(select(db.LabAudit).order_by(db.LabAudit.id.desc()).limit(50))]
 
 
 _dist = Path(__file__).parent / "web" / "dist"

@@ -8,7 +8,7 @@ RUN npm run build
 FROM python:3.13-slim
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt fastapi uvicorn
+RUN pip install --no-cache-dir -r requirements.txt fastapi uvicorn "fastapi-users[sqlalchemy]" "psycopg[binary]"
 COPY . .
 COPY --from=web /web/dist web/dist
 EXPOSE 8000

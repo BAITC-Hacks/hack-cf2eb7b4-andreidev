@@ -57,9 +57,22 @@ export type RunParams = { seed: number; world: World; llm: boolean; model: strin
 
 async function get<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
+  if (r.status === 401) window.dispatchEvent(new Event('unauthorized'))  // сессия истекла → Root покажет вход
   if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`)
   return r.json()
 }
+
+// ---------- вход (fastapi-users: cookie session, форма username/password) ----------
+export type Role = 'manager' | 'analyst' | 'admin'
+export type User = { email: string; role: Role }
+export const me = () => get<User>('/api/me')
+/** true — вошли, false — неверный email/пароль; остальное — исключение */
+export const login = async (email: string, password: string) => {
+  const r = await fetch('/api/auth/login', { method: 'POST', body: new URLSearchParams({ username: email, password }) })
+  if (r.ok || r.status === 400) return r.ok
+  throw new Error(`${r.status}: ${await r.text()}`)
+}
+export const logout = () => fetch('/api/auth/logout', { method: 'POST' })
 
 // старый server.py (uvicorn без --reload) не отдаёт replay/llm_audit — пустые списки вместо падения UI
 export const fetchRun = (p: RunParams) => get<Run>(`/api/run?seed=${p.seed}&world=${p.world}&llm=${p.llm}${p.model ? `&model=${encodeURIComponent(p.model)}` : ''}`)

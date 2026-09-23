@@ -38,6 +38,15 @@
         "API_PORT=8010 npm --prefix web run dev -- --port 5180 --strictPort"
       ],
       "port": 5180
+    },
+    {
+      "name": "api-auth",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "python3 -m uvicorn server:app --port 8020"
+      ],
+      "port": 8020
     }
   ]
 }
