@@ -46,7 +46,7 @@ class Traced(agent.Agent):
         run_pilot = env.run_pilot
 
         def traced(**kw):  # env.run_pilot — атрибут инстанса, агент вызывает его только с kwargs
-            ei = self._arm_ei(cells, arms)
+            ei = self._scores  # то, по чему _explore только что выбрал пилот (EI или VOI − цена)
             self.snaps.append(({k: (a["mu"], math.sqrt(a["var"]), a["n"]) for k, a in arms.items()}, ei,
                                (kw["filter_current_tariff"], kw["filter_arpu_segment"], kw["target_tariff"])))
             return run_pilot(**kw)
@@ -92,7 +92,7 @@ def run_payload(seed=42, world="mock", llm=True, llm_model=None):
     chosen = getattr(a, "_chosen", [])
     planned = {(x["cur"], x["seg"], x["target"]) for x in chosen}
     ei = a._arm_ei(cells, arms) if arms else {}
-    lcb = lambda m: m["mu"] - agent.LCB_K * math.sqrt(m["var"])  # noqa: E731
+    lcb = agent._lcb
 
     arm_rows = [{
         "cur": k[0], "seg": k[1], "target": k[2], "src": sorted(m.get("src", ())),

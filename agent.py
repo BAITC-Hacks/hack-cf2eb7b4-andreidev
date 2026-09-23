@@ -37,6 +37,10 @@ PILOT_MAX = 200
 # из lab.py, только если прошла benchmark gate на стресс-мирах.
 PILOT_SIZING = "fixed"      # "adaptive": большой пилот только спорным рукавам, уверенные не перепроверяем
 PILOT_BUDGET_SHARE = 1.0    # доля бюджета, которую можно потратить на пилоты
+PILOT_CONTACT_SHARE = 1.0   # доля охвата, которую можно потратить на пилоты
+PILOT_VALUE = "ei"          # "voi": пилот, только если ожидаемая польза смены решения > цены пилота
+LCB_K_PILOT = 0.5           # k для рукавов после пилота (у непилотированных остаётся LCB_K)
+LLM_GATE = 1.0              # LLM-рукав только в ячейках, где лучший prior mu < порога; 1.0 = всегда (prior < 0.35)
 RANK_BY = "mu"              # "lcb": target в ячейке и очередь охвата по mu - LCB_K*sigma
 CHANNEL_MU = "mu"           # "lcb": апгрейд канала по консервативной оценке — дорогой канал слабым ячейкам не достаётся
 UPGRADE_MIN_ROI = 0.0       # апгрейд канала только при dnet/dcost >= порога
@@ -191,6 +195,10 @@ def _ei(mu, sd, best):
     return sd * (z * 0.5 * (1 + math.erf(z / math.sqrt(2))) + math.exp(-z * z / 2) / math.sqrt(2 * math.pi))
 
 
+def _lcb(a):
+    return a["mu"] - (LCB_K_PILOT if a["n"] else LCB_K) * math.sqrt(a["var"])
+
+
 class Agent:
     deadline = math.inf  # ставится в act; внутренние методы, вызванные напрямую (stress_eval), без лимита
     model = None  # slug модели для LLM-эксперта; None → LLM_MODEL / OPENAI_MODEL из env
@@ -235,6 +243,11 @@ class Agent:
                 self.log.append(f"{name}: {len(props[name])} arms")
             except Exception as e:  # эксперт сломался — остальные работают
                 self.log.append(f"{name} skipped: {type(e).__name__}: {e}")
+        if "llm" in props:  # LLM закрывает пробелы prior, а не конкурирует с сильным prior за пилоты
+            top = {}
+            for k, mu in props.get("prior", {}).items():
+                top[k[:2]] = max(top.get(k[:2], 0.0), mu)
+            props["llm"] = {k: mu for k, mu in props["llm"].items() if top.get(k[:2], 0.0) < LLM_GATE}
         # реестр: один рукав на (cur, seg, target), src — кто его предложил;
         # mu — из истории, если она есть, иначе среднее догадок экспертов
         arms = {}
@@ -330,16 +343,47 @@ class Agent:
             n = min(PILOT_MIN + (PILOT_MAX - PILOT_MIN) / (1 + z), cells[k[:2]]["n"])
         return int(np.clip(n, PILOT_MIN, PILOT_MAX))
 
+    @staticmethod
+    def _marginal_value(cells, arms, room):
+        """Ценность на контакт (без канала) у ячейки на отсечке охвата: её вытесняет каждый контакт пилота."""
+        best = {}
+        for k, a in arms.items():
+            if _lcb(a) > 0 and a["mu"] > best.get(k[:2], 0.0):
+                best[k[:2]] = a["mu"]
+        for cell, mu in sorted(best.items(), key=lambda t: t[1] * cells[t[0]]["S"] / cells[t[0]]["n"], reverse=True):
+            room -= cells[cell]["n"]
+            if room < 0:
+                return mu * cells[cell]["S"] / cells[cell]["n"]
+        return 0.0  # ponytail: охвата хватает всем — контакты пилота бесплатны
+
+    def _arm_net_voi(self, env, cells, arms, mult, cost):
+        """
+        Knowledge gradient − цена пилота. KG: насколько пилот на n сдвинет решение по ячейке
+        (s̃ — sd сдвига μ); у уверенного лидера |μ − альтернатива| ≫ s̃ → ≈ 0, пилот не нужен.
+        Цена: SMS + вытесненные из плана контакты − выигрыш самого пилота (он тоже скорится).
+        """
+        v_marg = mult * self._marginal_value(cells, arms, env.remaining_contacts)
+        out = {}
+        for k, a in arms.items():
+            c, n = cells[k[:2]], self._pilot_size(cells, arms, k)
+            s = a["var"] / math.sqrt(a["var"] + (NOISE_STD / mult) ** 2 / n)
+            kg = c["S"] * mult * _ei(-abs(a["mu"] - self._best_other(arms, k)), s, 0.0)
+            out[k] = kg - n * (cost + v_marg - mult * max(a["mu"], 0.0) * c["S"] / c["n"])
+        return out
+
     def _explore(self, env, cells, arms):
         mult = env.channels[PILOT_CH]["conversion_multiplier"]
         cost = env.channels[PILOT_CH]["cost_per_contact"]
         ei0, llm_hits = None, []
         total = getattr(env, "total_budget", env.remaining_budget)
+        reach = getattr(env, "max_total_contacts", env.remaining_contacts)
         while env.pilots_left > 0:
             if time.time() > self.deadline:
                 self.log.append("explore stopped: time limit")
                 break
-            ei = self._arm_ei(cells, arms)
+            voi = PILOT_VALUE == "voi"
+            ei = self._arm_net_voi(env, cells, arms, mult, cost) if voi else self._arm_ei(cells, arms)
+            self._scores = ei
             if PILOT_SIZING == "adaptive":  # stop по posterior confidence: уверенный рукав не перепроверяем
                 ei = {k: v for k, v in ei.items() if not arms[k]["n"]
                       or abs(arms[k]["mu"] - self._best_other(arms, k)) / math.sqrt(arms[k]["var"]) <= 2}
@@ -347,12 +391,13 @@ class Agent:
                     break
             k = max(ei, key=ei.get)
             ei0 = ei0 or ei[k]
-            if ei[k] < EI_STOP * ei0:
+            if (ei[k] <= 0) if voi else (ei[k] < EI_STOP * ei0):
                 break
             cur, seg, target = k
             n = self._pilot_size(cells, arms, k)
-            # политика: не больше PILOT_BUDGET_SHARE бюджета на пилоты
+            # политика: не больше PILOT_BUDGET_SHARE бюджета и PILOT_CONTACT_SHARE охвата на пилоты
             n = min(n, int((PILOT_BUDGET_SHARE * total - (total - env.remaining_budget)) / cost) if cost else n)
+            n = min(n, int(PILOT_CONTACT_SHARE * reach - (reach - env.remaining_contacts)))
             if n < 10:
                 break
             # резерв: на оставшиеся контакты должно хватить SMS в финальном плане
@@ -383,17 +428,17 @@ class Agent:
     def _plan(self, env, cells, arms):
         ch = env.channels
         names = sorted(ch, key=lambda c: ch[c]["cost_per_contact"])  # push, sms, ads, call
-        rank = (lambda mu, var: mu - LCB_K * math.sqrt(var)) if RANK_BY == "lcb" else (lambda mu, var: mu)
+        rank = _lcb if RANK_BY == "lcb" else (lambda a: a["mu"])
         picks = []
         for (cur, seg), c in cells.items():
             # гипотеза без истории (только LLM) идёт в план лишь после пилота: догадке модели на слово не верим
-            cand = [(rank(a["mu"], a["var"]), a["mu"], a["var"], k[2]) for k, a in arms.items()
+            cand = [(rank(a), a["mu"], _lcb(a), math.sqrt(a["var"]), k[2]) for k, a in arms.items()
                     if k[:2] == (cur, seg) and ("prior" in a.get("src", ("prior",)) or a["n"])]
             if not cand:
                 continue
-            r, mu, var, target = max(cand)
-            if mu - LCB_K * math.sqrt(var) > 0:
-                picks.append({"cur": cur, "seg": seg, "target": target, "mu": mu, "sd": math.sqrt(var), "rank": r, **c})
+            r, mu, lcb, sd, target = max(cand)
+            if lcb > 0:
+                picks.append({"cur": cur, "seg": seg, "target": target, "mu": mu, "sd": sd, "lcb": lcb, "rank": r, **c})
 
         # охват: сначала самые ценные на контакт
         picks.sort(key=lambda x: x["rank"] * x["S"] / x["n"], reverse=True)
@@ -405,7 +450,7 @@ class Agent:
         self._chosen = chosen
 
         # канал: всем push, затем жадный апгрейд по Δnet/Δcost в рамках бюджета
-        val = (lambda x: x["mu"] - LCB_K * x["sd"]) if CHANNEL_MU == "lcb" else (lambda x: x["mu"])
+        val = (lambda x: x["lcb"]) if CHANNEL_MU == "lcb" else (lambda x: x["mu"])
         net = lambda x, c: val(x) * ch[c]["conversion_multiplier"] * x["S"] - ch[c]["cost_per_contact"] * x["n"]
         money = env.remaining_budget
         for x in chosen:
@@ -460,7 +505,7 @@ class Agent:
                 + (f" weight={self.weights[name]:.2f}" if name in self.weights else ""))
 
     def _fallback(self, env, arms):
-        tried = [(a["mu"] - LCB_K * math.sqrt(a["var"]), k) for k, a in arms.items() if a["n"]]
+        tried = [(_lcb(a), k) for k, a in arms.items() if a["n"]]
         if tried and max(tried)[0] > 0:
             cur, seg, target = max(tried)[1]
             return [{"campaign_name": "fallback", "filter_arpu_segment": seg,
