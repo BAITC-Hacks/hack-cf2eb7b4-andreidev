@@ -2,7 +2,7 @@
 Новые данные для кокпита: загрузка CSV и база знаний (прошлые пилоты и итоги кампаний).
 
 - Базовые выгрузки (change_tariff, traffic, dict_tariff, customer_profile) пишутся в UPLOAD_DIR, `data/` не трогаем:
-  сдача (agent.py + submission.csv) считается на исходных данных. Предыдущая версия файла остаётся в UPLOAD_DIR/prev.
+  агент (agent.py + submission.csv) считается на исходных данных. Предыдущая версия файла остаётся в UPLOAD_DIR/prev.
 - campaign_results — наблюдения на ЭТОЙ аудитории → Postgres (campaign_result) → Agent.feedback на следующем прогоне.
 
     python datasets.py   # self-check во временной схеме БД и временной папке

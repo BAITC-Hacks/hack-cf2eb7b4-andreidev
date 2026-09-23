@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Сборка десктоп-приложения: web/dist → сервер PyInstaller'ом → установщик Tauri.
-# Запуск из корня репо; пакет организаторов (data/, *.csv, environment.py …) должен лежать в корне.
+# Запуск из корня репо; пакет среды (data/, *.csv, environment.py …) должен лежать в корне.
 # Итог: desktop/src-tauri/target/release/bundle/ (dmg на macOS, nsis/msi на Windows).
 set -euo pipefail
 cd "$(dirname "$0")/.."

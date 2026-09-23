@@ -5,7 +5,7 @@
 
 | Переменная | Где | По умолчанию | Назначение |
 |---|---|---|---|
-| `OPENAI_API_KEY` | агент | — | ключ LLM-эксперта (на судействе подставляют организаторы) |
+| `OPENAI_API_KEY` | агент | — | ключ LLM-эксперта |
 | `OPENAI_MODEL` | агент | `gpt-4o-mini` | модель OpenAI |
 | `OPENAI_BASE_URL` | агент | `https://api.openai.com/v1` | OpenAI-совместимый endpoint |
 | `OPENROUTER_API_KEY` | агент | — | если задан, LLM идёт через OpenRouter (приоритет над OpenAI) |

@@ -21,7 +21,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: desktop/src-tauri }
-      # пакет организаторов в git не коммитим — лежит архивом в релизе participant-pkg этого репо
+      # пакет среды в git не коммитим — лежит архивом в релизе participant-pkg этого репо
       - run: gh release download participant-pkg -p participant-pkg.tar.gz && tar xzf participant-pkg.tar.gz && rm participant-pkg.tar.gz
         env: { GH_TOKEN: "${{ github.token }}" }
       - run: bash desktop/build.sh

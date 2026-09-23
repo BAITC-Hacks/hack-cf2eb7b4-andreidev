@@ -35,7 +35,7 @@ export function useVersion(v: Version | undefined) {
   return full?.id === v?.id ? full : undefined
 }
 
-// Семейства миров, как WORLDS в lab.py; первое — главное для gate (история бесполезна, как на судействе)
+// Семейства миров, как WORLDS в lab.py; первое — главное для gate (история бесполезна, как в боевой среде)
 export const FAMILIES = [
   { test: 'harsh_0', key: 'harsh0', label: 'Жёсткие · keep 0' },
   { test: 'harsh_50', key: 'harsh50', label: 'Жёсткие · keep 0.5' },

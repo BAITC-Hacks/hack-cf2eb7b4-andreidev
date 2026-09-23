@@ -1,13 +1,13 @@
-# Агент тарифных кампаний Beeline
+# Агент тарифных кампаний
 
 `agent.py`: портфель экспертов (история + LLM) предлагает гипотезы → адаптивные пилоты → жадный план под лимиты. pandas/numpy + stdlib. Без LLM-ключа (`OPENROUTER_API_KEY` / `OPENAI_API_KEY`) детерминирован.
 
-**Назначение.** Решение кейса «Beeline Tariff Marketing Campaigns»: агент сам проводит пилоты на аудитории и отдаёт план до 10 кампаний (кому, какой тариф, какой канал), чтобы чистый прирост ARPU был максимальным при лимитах бюджета, охвата и числа пилотов. Пользователь — аналитик маркетинга. Для него есть веб-интерфейс Campaign Cockpit: видно, почему агент принял каждое решение. Для менеджера — упрощённый экран «сформировать план → CSV».
+**Назначение.** Агент для телеком-оператора: сам проводит пилоты на аудитории и отдаёт план до 10 кампаний (кому, какой тариф, какой канал), чтобы чистый прирост ARPU был максимальным при лимитах бюджета, охвата и числа пилотов. Пользователь — аналитик маркетинга. Для него есть веб-интерфейс Campaign Cockpit: видно, почему агент принял каждое решение. Для менеджера — упрощённый экран «сформировать план → CSV».
 
 ## Быстрый старт (проверка с чистого клона)
 Требования: Python 3.13 (на нём проверено), для UI — Node 22 или Docker.
 
-1. **Положить пакет участника в корень репо.** Пакет выдают организаторы кейса, в git он не коммитится (`.gitignore`). Нужны файлы: `local_eval.py`, `make_submission.py`, `environment.py`, `mock_environment.py`, `scoring_core.py`, `customer_profile.csv`, `feature_dictionary.csv`, `tariff_dictionary.csv` и папка `data/` (`change_tariff.csv`, `traffic.csv`, `arpu_monthly.csv`, `dict_tariff.csv`). Копия пакета лежит в релизе `participant-pkg` этого репо:
+1. **Положить пакет среды и данных в корень репо.** В git он не коммитится (`.gitignore`). Нужны файлы: `local_eval.py`, `make_submission.py`, `environment.py`, `mock_environment.py`, `scoring_core.py`, `customer_profile.csv`, `feature_dictionary.csv`, `tariff_dictionary.csv` и папка `data/` (`change_tariff.csv`, `traffic.csv`, `arpu_monthly.csv`, `dict_tariff.csv`). Копия пакета лежит в релизе `participant-pkg` этого репо:
    ```bash
    gh release download participant-pkg -p participant-pkg.tar.gz && tar xzf participant-pkg.tar.gz && rm participant-pkg.tar.gz
    ```
@@ -15,7 +15,7 @@
    ```bash
    pip install -r requirements.txt
    ```
-3. **Проверить основной сценарий** (must-have из ТЗ):
+3. **Проверить основной сценарий:**
    ```bash
    python local_eval.py              # ожидается «Статус: PASS», net ≈ 4.4M, «Пилотов проведено: 20 из 20», нет строк «отброшена»
    python local_eval.py --runs 10    # устойчивость: все 10 прогонов в плюс
@@ -30,7 +30,7 @@ LLM_MODEL=openai/gpt-4o-mini
 ```
 
 ## Сборка и запуск UI (Campaign Cockpit)
-Пакет организаторов должен лежать в корне репо (шаг 1 быстрого старта): в образ он попадает из рабочей копии.
+Пакет среды должен лежать в корне репо (шаг 1 быстрого старта): в образ он попадает из рабочей копии.
 
 **Docker — одной командой** (Postgres + API + собранный фронт на одном порту):
 ```bash
@@ -60,7 +60,7 @@ Swagger: http://localhost:8000/api/docs. Self-check'и и тесты — [docs/t
 ```bash
 bash desktop/build.sh     # на маке → desktop/src-tauri/target/release/bundle/dmg/*.dmg; на Windows (Git Bash) → bundle/nsis/*.exe, bundle/msi/*.msi
 ```
-Нужны Python 3.13, Node 22, Rust и пакет организаторов в корне. Обе версии разом собирает GitHub Actions: Actions → **desktop** → Run workflow (или тег `v*`), установщики лежат в артефактах прогона. Вход — те же демо-пользователи. Каталог данных, `.env` для LLM-ключа и ограничения описаны в [docs/desktop.md](docs/desktop.md): promote лаборатории и CatBoost в десктопе недоступны, сборка не подписана.
+Нужны Python 3.13, Node 22, Rust и пакет среды в корне. Обе версии разом собирает GitHub Actions: Actions → **desktop** → Run workflow (или тег `v*`), установщики лежат в артефактах прогона. Вход — те же демо-пользователи. Каталог данных, `.env` для LLM-ключа и ограничения описаны в [docs/desktop.md](docs/desktop.md): promote лаборатории и CatBoost в десктопе недоступны, сборка не подписана.
 
 ## Вход
 При пустой таблице пользователей и `AUTH_DEMO=1` (по умолчанию в `docker compose`) заводятся демо-пользователи, пароль равен роли:
@@ -79,7 +79,7 @@ python3 auth.py add boss@corp.ru 'пароль' manager
 
 ## Архитектура
 ```
-пакет организатора (env, data/) ──▶ agent.py ──▶ план кампаний ──▶ make_submission.py ──▶ submission.csv
+пакет среды (env, data/) ──▶ agent.py ──▶ план кампаний ──▶ make_submission.py ──▶ submission.csv
                                        │  ▲
                         агрегаты ячеек ▼  │ до 2 target на ячейку
                                  LLM (OpenRouter / OpenAI, опционально)
@@ -89,7 +89,7 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
                             ▼
                         Postgres (db.py, auth.py): пользователи, сессии, версии, аудит LLM
 ```
-- `agent.py` — сдаваемый агент (`Agent.act(env)`). От БД и UI не зависит.
+- `agent.py` — агент (`Agent.act(env)`). От БД и UI не зависит.
 - `stress_eval.py` — локальный стенд: искажённые и жёсткие миры для проверки устойчивости.
 - `lab.py` — лаборатория версий настроек агента (цикл самоулучшения с gate).
 - `server.py`, `auth.py`, `db.py`, `web/` — Campaign Cockpit: API, роли, хранилище, фронтенд.
@@ -106,7 +106,7 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 ## Документация
 | Документ | О чём |
 |---|---|
-| [Архитектура](docs/architecture.md) | модули, поток данных, файлы пакета организатора, структура фронтенда |
+| [Архитектура](docs/architecture.md) | модули, поток данных, файлы пакета среды, структура фронтенда |
 | [Как работает агент](docs/agent.md) | ключевое наблюдение, prior, эксперты, EI-пилоты, план, fallback, честная игра |
 | [Настройки](docs/configuration.md) | переменные окружения и константы `agent.py` |
 | [Данные и эксперименты](docs/experiments.md) | что показали данные, стресс-миры, ablation, отброшенные идеи |
@@ -118,8 +118,8 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 | [Безопасность](SECURITY.md) | защита API и UI, чек-лист выкладки |
 
 ## Сторонние компоненты
-Код в репозитории разработан во время соревновательной части. Использованы:
-- **пакет участника от организаторов** (в git не входит): среда `environment.py` / `mock_environment.py`, `scoring_core.py`, `local_eval.py`, `make_submission.py`, синтетические данные;
+Использованы:
+- **внешний пакет среды и данных** (в git не входит, это не наш код): среда `environment.py` / `mock_environment.py`, `scoring_core.py`, `local_eval.py`, `make_submission.py`, синтетические данные;
 - **open-source библиотеки** по их лицензиям: pandas, numpy (BSD), CatBoost (Apache 2.0), FastAPI, fastapi-users, Uvicorn (MIT / BSD), SQLAlchemy, psycopg (MIT / LGPL), React, Vite, HeroUI (MIT), PostgreSQL (PostgreSQL License); для десктопа — Tauri v2 (MIT / Apache 2.0), PyInstaller (GPL с исключением для сборок), aiosqlite (MIT), SQLite (public domain). Полный список фронтенда — в `web/package.json`, Rust-зависимостей — в `desktop/src-tauri/Cargo.toml`;
 - **внешняя модель:** `gpt-4o-mini` через OpenAI или OpenRouter — только как эксперт-источник гипотез; в неё уходят агрегаты по ячейкам, без строк абонентов;
-- **AI-ассистенты** при разработке (разрешено п. 5.4.12 Положения).
+- **AI-ассистенты** при разработке.

@@ -1,7 +1,7 @@
 """
 Агент тарифных кампаний: эксперты предлагают рукава → адаптивные пилоты (EI) → жадный план.
 
-Ключевое наблюдение (из описания среды в пакете участника): эффект зависит только от ячейки
+Ключевое наблюдение (из описания среды): эффект зависит только от ячейки
 (current_tariff, arpu_segment), целевого тарифа и канала, причём канал лишь
 умножает эффект. Поэтому гипотеза = ячейка × target, а один SMS-пилот даёт
 оценку для всех каналов сразу (base = observed / multiplier).
@@ -20,8 +20,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-NOISE_STD = 0.804   # шум на абонента, опубликован в документации пакета участника
-PRIOR_STD = 0.25    # широкий: на судействе эффекты другие, чем в истории
+NOISE_STD = 0.804   # шум на абонента, опубликован в документации среды
+PRIOR_STD = 0.25    # широкий: в боевой среде эффекты другие, чем в истории
 ARMS_PER_CELL = 4
 LCB_K = 0.5         # в план: mu - k*sigma > 0; 0 уходит в минус в пессимистичных мирах, 1 слишком робок
 EI_STOP = 0.005     # хватит разведки, когда EI < 0.5% от стартового максимума
@@ -239,7 +239,7 @@ def model_mu(h, mp, mode=None):
 
 
 def llm_config(model=None):
-    """(base_url, key, model): OpenRouter, если есть OPENROUTER_API_KEY, иначе OpenAI (так ключ дают организаторы)."""
+    """(base_url, key, model): OpenRouter, если есть OPENROUTER_API_KEY, иначе OpenAI."""
     if os.environ.get("OPENROUTER_API_KEY"):
         return ("https://openrouter.ai/api/v1", os.environ["OPENROUTER_API_KEY"],
                 model or os.environ.get("LLM_MODEL", "openai/gpt-4o-mini"))
@@ -342,7 +342,7 @@ class Agent:
     deadline = math.inf  # ставится в act; внутренние методы, вызванные напрямую (stress_eval), без лимита
     model = None  # slug модели для LLM-эксперта; None → LLM_MODEL / OPENAI_MODEL из env
     # база знаний: прошлые пилоты и итоги кампаний на этой аудитории, dict(cur, seg, target, channel, n, lift_ratio).
-    # Пусто в сдаче; server.py подкладывает строки из Postgres.
+    # Пусто без кокпита; server.py подкладывает строки из Postgres.
     feedback = ()
 
     def __init__(self):

@@ -1,7 +1,7 @@
 # Архитектура
 
 ```
-пакет организатора (env, data/) ──▶ agent.py ──▶ план кампаний ──▶ make_submission.py ──▶ submission.csv
+пакет среды (env, data/) ──▶ agent.py ──▶ план кампаний ──▶ make_submission.py ──▶ submission.csv
                                        │  ▲
                         агрегаты ячеек ▼  │ до 2 target на ячейку
                                  LLM (OpenRouter / OpenAI, опционально)
@@ -13,11 +13,11 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 ```
 
 Две независимые части:
-- **Сдача** — `agent.py` + `submission.csv`. Агент получает среду организатора (`Agent.act(env)`), читает историю из `data/`, проводит пилоты через `env.run_pilot` и возвращает план. От БД, сервера и UI не зависит.
-- **Campaign Cockpit** — сервер, БД и фронтенд, чтобы видеть, что агент делает и почему, загружать новые данные и улучшать настройки агента в лаборатории. В сдачу не входит.
+- **Агент** — `agent.py` + `submission.csv`. Агент получает среду (`Agent.act(env)`), читает историю из `data/`, проводит пилоты через `env.run_pilot` и возвращает план. От БД, сервера и UI не зависит.
+- **Campaign Cockpit** — сервер, БД и фронтенд, чтобы видеть, что агент делает и почему, загружать новые данные и улучшать настройки агента в лаборатории. Агенту не нужен.
 
-## Поток данных сдачи
-1. `make_submission.py` / `local_eval.py` (пакет организатора) строят среду из `customer_profile.csv` и `data/`.
+## Поток данных агента
+1. `make_submission.py` / `local_eval.py` (пакет среды) строят среду из `customer_profile.csv` и `data/`.
 2. `Agent.act(env)`: prior из `data/change_tariff.csv` → эксперты предлагают рукава → адаптивные пилоты → жадный план ≤ 10 кампаний. Подробно — [agent.md](agent.md).
 3. План валидирует и скорит `scoring_core.py`, `make_submission.py` пишет `submission.csv`.
 
@@ -26,8 +26,8 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 ### Наши файлы
 | Файл | Назначение |
 |---|---|
-| `agent.py` | сдаваемый агент: prior, эксперты (история, LLM), EI-пилоты, LCB-отбор, план, fallback, privacy gateway для LLM |
-| `stress_eval.py` | локальный стенд: искажённые, структурные и жёсткие миры, CV CatBoost-prior. В сдачу не входит |
+| `agent.py` | агент: prior, эксперты (история, LLM), EI-пилоты, LCB-отбор, план, fallback, privacy gateway для LLM |
+| `stress_eval.py` | локальный стенд: искажённые, структурные и жёсткие миры, CV CatBoost-prior. Агенту не нужен |
 | `lab.py` | лаборатория версий настроек агента: матрица тестов, детекторы, ремедиация, gate, promote — [lab.md](lab.md) |
 | `server.py` | FastAPI: прогон агента с трассировкой (`Traced`), стратегии, данные, лаборатория, Swagger — [cockpit.md](cockpit.md) |
 | `auth.py` | вход и роли на fastapi-users, bootstrap пользователей, CLI `add` |
@@ -36,7 +36,7 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 | `security_check.py` | security-проверка API — [../SECURITY.md](../SECURITY.md) |
 | `Dockerfile`, `docker-compose.yml` | образ API + собранного фронта, Postgres 17 |
 
-### Пакет организатора (не в git)
+### Пакет среды (не в git)
 `environment.py`, `mock_environment.py`, `scoring_core.py`, `local_eval.py`, `make_submission.py`, `agent_template.py`, `customer_profile.csv`, `feature_dictionary.csv`, `tariff_dictionary.csv`, `data/` (`change_tariff.csv`, `traffic.csv`, `arpu_monthly.csv`, `dict_tariff.csv`). Лежит в корне репо рядом с нашими файлами.
 
 ### Фронтенд `web/src`

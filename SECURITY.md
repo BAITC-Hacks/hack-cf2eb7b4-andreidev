@@ -1,7 +1,7 @@
 # Безопасность кокпита
 
 Как устроена защита API и UI (`server.py`, `auth.py`, `datasets.py`, `lab.py`, `agent.py`), что проверяет
-`security_check.py` и что нужно сделать перед выкладкой. Сама сдача (`agent.py` + `submission.csv`) от этого
+`security_check.py` и что нужно сделать перед выкладкой. Сам агент (`agent.py` + `submission.csv`) от этого
 не зависит: сервер, БД и вход нужны только кокпиту.
 
 ## Кратко

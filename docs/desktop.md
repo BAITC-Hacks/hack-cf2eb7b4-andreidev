@@ -1,6 +1,6 @@
 # Десктоп-приложение (macOS и Windows)
 
-Campaign Cockpit собирается в офлайн-приложение на [Tauri v2](https://tauri.app). Docker, Postgres и Python у пользователя не нужны: внутри установщика лежат сервер, собранный фронт, агент и данные кейса.
+Campaign Cockpit собирается в офлайн-приложение на [Tauri v2](https://tauri.app). Docker, Postgres и Python у пользователя не нужны: внутри установщика лежат сервер, собранный фронт, агент и данные среды.
 
 ## Как устроено
 ```
@@ -40,10 +40,10 @@ AUTH_USERS=boss@corp.ru:пароль:manager   # свои пользовател
 - **CatBoost** в сборку не входит, это экономит ~150 МБ. Режимы `PRIOR_MODEL=catboost_*` недоступны, по умолчанию они и так выключены.
 - **Подписи нет.** macOS: первый запуск через правый клик → «Открыть», или `xattr -cr "/Applications/Campaign Cockpit.app"`. Windows: SmartScreen → «Подробнее» → «Выполнить в любом случае».
 - Сборка под macOS — только Apple Silicon (arm64). Intel добавляется строкой `macos-13` в матрице workflow.
-- Размер: `.dmg` ~145 МБ, в распакованном виде ~410 МБ (pandas, numpy, данные кейса).
+- Размер: `.dmg` ~145 МБ, в распакованном виде ~410 МБ (pandas, numpy, данные среды).
 
 ## Сборка
-Нужны Python 3.13, Node 22 и Rust (stable, `rustup`). Пакет организаторов должен лежать в корне репо (шаг 1 быстрого старта в README).
+Нужны Python 3.13, Node 22 и Rust (stable, `rustup`). Пакет среды должен лежать в корне репо (шаг 1 быстрого старта в README).
 
 **macOS** — локально:
 ```bash
@@ -57,7 +57,7 @@ bash desktop/build.sh
 ```bash
 tar czf participant-pkg.tar.gz data customer_profile.csv feature_dictionary.csv tariff_dictionary.csv \
   environment.py mock_environment.py scoring_core.py agent_template.py local_eval.py make_submission.py
-gh release create participant-pkg participant-pkg.tar.gz --title "Пакет организаторов (для сборки CI)" --notes ""
+gh release create participant-pkg participant-pkg.tar.gz --title "Пакет среды и данных (для сборки CI)" --notes ""
 ```
 
 `desktop/build.sh` делает четыре шага:

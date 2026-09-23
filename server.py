@@ -6,7 +6,7 @@ API для UI (web/): запускает агента в мок- или стре
     uvicorn server:app --port 8000
     python3 server.py                  # self-check без сервера
 
-В сдачу не входит; agent.py не меняет — только наблюдает через подкласс.
+Агенту не нужен; agent.py не меняет — только наблюдает через подкласс.
 """
 
 import functools
@@ -63,7 +63,7 @@ TAGS = [{"name": "auth", "description": "Вход и выход (fastapi-users, 
         {"name": "agent", "description": "Прогон агента и сравнение стратегий."},
         {"name": "data", "description": "Новые данные: загрузка CSV и база знаний из пилотов и итогов кампаний."},
         {"name": "lab", "description": "Лаборатория версий агента: правки констант, оценка, промоут. Только admin."}]
-app = FastAPI(title="Beeline campaign cockpit", version="1.0", description=API_DOC, openapi_tags=TAGS,
+app = FastAPI(title="Campaign Cockpit", version="1.0", description=API_DOC, openapi_tags=TAGS,
               docs_url="/api/docs", redoc_url=None, openapi_url="/api/openapi.json")  # под /api — проксирует vite
 db.init()
 auth.bootstrap()
