@@ -18,7 +18,10 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from typing import Literal
+
 from fastapi import Body, Depends, FastAPI, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field
 
 _env_file = Path(__file__).parent / ".env"
 if _env_file.exists():  # ponytail: без python-dotenv, формат KEY=VALUE
@@ -235,7 +238,206 @@ def strategies_payload(runs=5):
                                        "positive": int((df[n] > 0).sum())} for n in names]}
 
 
-@app.get("/api/run", dependencies=[Depends(ANY)], tags=["agent"], summary="Прогон агента")
+# --- схема ответа /api/run: только для Swagger, ответ не фильтрует; self-check валидирует её на живом run_payload
+class _M(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+Num = float | None  # _f: NaN/inf → null
+
+
+class Params(_M):
+    seed: int
+    world: str
+    llm: bool = Field(description="LLM-эксперт запрошен")
+    llm_available: bool = Field(description="на сервере есть ключ LLM")
+    model: str | None = Field(description="модель, которую реально взял агент")
+    models: list[str] = Field(description="пресеты для селектора")
+
+
+class Limits(_M):
+    total_budget: float
+    total_contacts: int
+    total_pilots: int
+    budget_after_pilots: Num = Field(description="бюджет, оставшийся на план после пилотов")
+    contacts_after_pilots: int
+    pilots_left: int
+    lcb_k: float = Field(description="k в правиле плана μ − k·σ > 0")
+
+
+class Channel(_M):
+    cost_per_contact: float
+    conversion_multiplier: float
+
+
+class Tariff(_M):
+    tariff_plan_code: str
+    price_tariff: float
+    Data_in_PKG: float = Field(description="пакет данных, ГБ")
+
+
+class AudienceCell(_M):
+    cur: str = Field(description="текущий тариф")
+    seg: str = Field(description="ARPU-сегмент")
+    n: int = Field(description="абонентов в ячейке")
+    S: Num = Field(description="Σ predicted_arpu ячейки")
+    arpu: Num = Field(description="средний ARPU за 3 мес.")
+
+
+class Audience(_M):
+    cells: list[AudienceCell]
+    dist: dict[str, dict[str, dict[str, int]]] = Field(description="{data_segment|call_segment: {seg: {значение: число}}}")
+
+
+class Arm(_M):
+    """Гипотеза «ячейка → target» и её гауссов апостериор."""
+    cur: str
+    seg: str
+    target: str
+    src: list[str] = Field(description="кто предложил: prior, llm")
+    prior_mu: Num
+    prior_sd: Num
+    post_mu: Num
+    post_sd: Num
+    lcb: Num = Field(description="нижняя граница, по которой рукав идёт в план")
+    n: int = Field(description="абонентов в пилотах этого рукава")
+    obs: list[Num] = Field(description="наблюдённые эффекты пилотов")
+    ei: Num = Field(description="expected improvement × Σ ARPU в конце разведки")
+    planned: bool
+
+
+class Pilot(_M):
+    name: str
+    cur: str
+    seg: str
+    target: str
+    channel: str
+    n: int
+    cost: Num
+    ratio: Num = Field(description="observed_lift_ratio от среды")
+    total: Num = Field(description="observed_lift_total от среды")
+    base: Num = Field(description="ratio без множителя канала")
+    prior_mu: Num = None
+    post_mu: Num = None
+    post_sd: Num = None
+    decision: Literal["scale", "hold", "drop"] = Field(description="в плане / проходит LCB, но не в плане / отброшен")
+
+
+class PlanCell(_M):
+    cur: str
+    seg: str
+    n: int
+    S: Num
+    mu: Num
+    gain: Num = Field(description="μ × множитель канала × S")
+
+
+class Campaign(_M):
+    campaign_name: str
+    filter_arpu_segment: str | None
+    filter_current_tariff: str | None = Field(description="тарифы через «;»")
+    target_tariff: str
+    channel: str
+    audience: int
+    expected_gain: Num = Field(description="прогноз агента")
+    expected_cost: Num
+    cells: list[PlanCell]
+    actual_gross: Num = Field(description="прирост по скорингу среды")
+    actual_cost: Num
+    actual_contacts: int
+    caps: list[str] = Field(description="какие лимиты обрезали кампанию при скоринге")
+
+
+class Score(_M):
+    """Итог `scoring_core.score_campaigns` по пилотам и плану."""
+    team_id: str | None
+    baseline_total_arpu: Num
+    gross_arpu_lift: Num
+    total_cost: Num
+    net_arpu_gain: Num = Field(description="главная метрика: прирост ARPU − затраты")
+    total_arpu_after: Num
+    growth_vs_baseline_pct: Num
+    status: str
+    n_campaigns: Num = Field(description="вместе с пилотами")
+    total_contacts: Num
+    unique_customers_targeted: Num
+    coverage_pct: Num
+    avg_gain_per_customer: Num
+    roi: Num
+    risk_score_pct: Num
+    budget_used_pct: Num
+
+
+class TopEi(_M):
+    cur: str
+    seg: str
+    target: str
+    ei: Num
+
+
+class ReplayArm(_M):
+    target: str
+    src: list[str]
+    planned: bool
+    before_mu: Num
+    before_sd: Num
+    after_mu: Num
+    after_sd: Num
+
+
+class ReplayStep(_M):
+    """Шаг разведки: какой пилот выбран, по какому EI, и как сдвинулся апостериор его ячейки."""
+    i: int
+    cur: str
+    seg: str
+    target: str
+    n: int | None
+    obs: Num
+    ei: Num
+    top_ei: list[TopEi] = Field(description="5 лучших кандидатов на этом шаге")
+    cell: list[ReplayArm] = Field(description="все рукава ячейки до и после пилота")
+
+
+class LlmCall(_M):
+    task: str
+    model: str | None
+    mode: str
+    fields_sent: list[str]
+    redacted_fields: list[str]
+    prompt: str
+    prompt_sha: str
+    response: str | None
+    error: str | None
+    latency: float | None = Field(description="секунды")
+    parsed: list[dict] = Field(description="принятые предложения: cur, seg, target, expected, used, clipped")
+    rejected: list[dict] = Field(description="отклонённые: row, reason")
+
+
+class Privacy(_M):
+    mode: str
+    allowlist: list[str] = Field(description="поля, которые можно отправить в LLM")
+    k_min: int = Field(description="минимальный размер ячейки для отправки")
+    redacted_fields: list[str]
+
+
+class RunOut(_M):
+    params: Params
+    limits: Limits
+    channels: dict[str, Channel]
+    tariffs: list[Tariff]
+    audience: Audience
+    arms: list[Arm]
+    pilots: list[Pilot]
+    plan: list[Campaign] = Field(description="финальный план, ≤10 кампаний")
+    score: Score
+    log: list[str]
+    replay: list[ReplayStep] = Field(description="по шагу на каждый пилот")
+    llm_audit: list[LlmCall] = Field(description="все вызовы LLM (пусто без LLM)")
+    privacy: Privacy
+
+
+@app.get("/api/run", dependencies=[Depends(ANY)], tags=["agent"], summary="Прогон агента",
+         responses={200: {"model": RunOut}})
 def api_run(seed: int = Query(42, description="seed среды: выборка пилотов и, для `stress`, искажение эффектов"),
             world: str = Query("mock", pattern="^(mock|stress)$",
                                description="`mock` — эффекты из истории, `stress` — искажённый мир из `stress_eval`"),
@@ -368,6 +570,7 @@ if __name__ == "__main__":
     spec = TestClient(app).get("/api/openapi.json").json()
     assert {p["name"]: p.get("description") for p in spec["paths"]["/api/run"]["get"]["parameters"]}["world"], "swagger"
     assert spec["paths"]["/api/auth/login"]["post"]["summary"] == "Вход", "swagger: login"
+    RunOut.model_validate(r)  # схема /api/run в Swagger совпадает с реальным ответом (extra="forbid")
     sub = pd.read_csv("submission.csv")["campaign_name"].tolist()
     print("plan == submission.csv:", [c["campaign_name"] for c in r["plan"]] == sub)
     print(f"ok: {len(r['arms'])} arms, {len(r['pilots'])} pilots, {len(r['plan'])} campaigns, "
