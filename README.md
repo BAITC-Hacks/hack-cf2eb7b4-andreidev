@@ -7,7 +7,10 @@
 ## Быстрый старт (проверка с чистого клона)
 Требования: Python 3.13 (на нём проверено), для UI — Node 22 или Docker.
 
-1. **Положить пакет участника в корень репо.** Пакет выдают организаторы кейса, в git он не коммитится (`.gitignore`). Нужны файлы: `local_eval.py`, `make_submission.py`, `environment.py`, `mock_environment.py`, `scoring_core.py`, `customer_profile.csv`, `feature_dictionary.csv`, `tariff_dictionary.csv` и папка `data/` (`change_tariff.csv`, `traffic.csv`, `arpu_monthly.csv`, `dict_tariff.csv`).
+1. **Положить пакет участника в корень репо.** Пакет выдают организаторы кейса, в git он не коммитится (`.gitignore`). Нужны файлы: `local_eval.py`, `make_submission.py`, `environment.py`, `mock_environment.py`, `scoring_core.py`, `customer_profile.csv`, `feature_dictionary.csv`, `tariff_dictionary.csv` и папка `data/` (`change_tariff.csv`, `traffic.csv`, `arpu_monthly.csv`, `dict_tariff.csv`). Копия пакета лежит в релизе `participant-pkg` этого репо:
+   ```bash
+   gh release download participant-pkg -p participant-pkg.tar.gz && tar xzf participant-pkg.tar.gz && rm participant-pkg.tar.gz
+   ```
 2. **Установить зависимости агента:**
    ```bash
    pip install -r requirements.txt
