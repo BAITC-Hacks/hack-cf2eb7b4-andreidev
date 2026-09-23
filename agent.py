@@ -7,7 +7,9 @@
 оценку для всех каналов сразу (base = observed / multiplier).
 """
 
+import functools
 import hashlib
+import io
 import json
 import math
 import os
@@ -25,6 +27,14 @@ LCB_K = 0.5         # в план: mu - k*sigma > 0; 0 уходит в мину�
 EI_STOP = 0.005     # хватит разведки, когда EI < 0.5% от стартового максимума
 PILOT_CH = "sms"    # в 1.69 раза информативнее push на контакт
 USE_FIT = True      # поправка prior: влезает ли трафик аудитории в пакет target
+# CatBoost-prior: pct абонента = f(ARPU, трафик, from, to, пакеты), усреднённый по строкам АУДИТОРИИ ячейки.
+# "hist" = prior только из истории (как было); модель включает версия lab.py, прошедшая gate.
+PRIOR_MODEL = "hist"        # "catboost_shift": модель сдвигает групповое среднее; "catboost_full": смесь модель/история
+PRIOR_ALPHA_MAX = 0.7       # full: вес модели при большой истории перехода
+PRIOR_ALPHA_K = 30          # full: α(n) = ALPHA_MAX·n/(n+K) — при малом n не верим и модели
+RISK_LAMBDA = 0.0           # штраф μ −= λ·u, u = 1/√(n+1) + доля строк вне диапазона train
+PRIOR_WEIGHT = "rows"       # "arpu": среднее предсказаний с весом predicted_arpu
+SUPPORT_MIN = 10            # full: переходов меньше — модель может только понизить μ
 DATA_DIR = Path(__file__).parent / "data"
 KEY = ["tariff_plan_code_from", "seg", "tariff_plan_code_to"]
 LLM_PER_CELL = 2
@@ -98,15 +108,133 @@ def _fit_shift(h, profile, dict_tariff, data_dir=DATA_DIR):
     return pd.Series(shift, dtype=float), beta
 
 
-def _prior(h, shift=None):
-    """base = shrunk (mean pct + сдвиг по трафику) × conversion share по (from, seg, to)."""
+def _prior(h, shift=None, mean=None):
+    """
+    base = shrunk (mean pct + сдвиг) × conversion share по (from, seg, to).
+    mean (catboost_full) — готовый μ по KEY, заменяет shrunk mean; conversion share остаётся.
+    """
     g = h.groupby(KEY)["pct"].agg(["mean", "size"])
     if shift is not None:
         g["mean"] = g["mean"] + shift.reindex(g.index).fillna(0.0)
+    mu = g["mean"] * g["size"] / (g["size"] + 10)
+    if mean is not None:
+        mu = mean.reindex(g.index).fillna(mu)
+    g["mu"] = mu
     g = g.reset_index()
     g["total"] = g.groupby(["tariff_plan_code_from", "seg"])["size"].transform("sum")
-    g["base"] = g["mean"] * g["size"] / (g["size"] + 10) * g["size"] / g["total"]
+    g["base"] = g["mu"] * g["size"] / g["total"]
     return {(r.tariff_plan_code_from, r.seg, r.tariff_plan_code_to): r.base for r in g.itertuples()}
+
+
+# --- CatBoost-prior ----------------------------------------------------------
+CAT = ["tariff_plan_code_from", "tariff_plan_code_to", "seg", "key"]
+PKG = {"price_tariff": "price", "Data_in_PKG": "data", "Min_another_operator_in_PKG": "min",
+       "Min_another_operator_and_city_in_PKG": "min_city"}
+
+
+def usage_cols(profile_columns, data_dir=DATA_DIR):
+    """Потребление, которое есть и в профиле аудитории, и в traffic.csv истории (имена и единицы совпадают)."""
+    t = pd.read_csv(data_dir / "traffic.csv", nrows=0).columns
+    return tuple(sorted((set(t) & set(profile_columns)) - {"ID_NUMBER", "tariff_plan_code"}))
+
+
+def _usage(cols, data_dir=DATA_DIR):
+    """Трафик истории: среднее за 3 последних месяца до перехода — как 3m-средние в профиле."""
+    t = pd.read_csv(data_dir / "traffic.csv", usecols=["ID_NUMBER", "time_key", *cols])
+    t = t[t["time_key"].isin(sorted(t["time_key"].unique())[-3:])]
+    return t.groupby("ID_NUMBER")[list(cols)].mean()
+
+
+def hist_rows(h, usage):
+    """Строки истории в формате _features: from/seg/to, arpu, вес, трафик, pct."""
+    r = h[["ID_NUMBER", *KEY, "pct"]].assign(arpu=h["AVG_ARPU_PREV_3M"], w=h["AVG_ARPU_PREV_3M"])
+    return r.join(usage, on="ID_NUMBER")
+
+
+def profile_rows(profile, cols):
+    """Строки аудитории в формате _features (без target). ARPU < 100 отброшен, как в _history: модель там не училась."""
+    profile = profile[profile["ARPU_3m_avg"] >= 100]
+    return pd.DataFrame({"tariff_plan_code_from": profile["current_tariff"], "seg": profile["arpu_segment"].astype(str),
+                         "arpu": profile["ARPU_3m_avg"], "w": profile["predicted_arpu"], **{c: profile[c] for c in cols}})
+
+
+def _features(rows, cols, tariffs):
+    """Одна функция для обучения и инференса: одинаковые колонки, порядок и единицы."""
+    X = rows[["tariff_plan_code_from", "tariff_plan_code_to", "seg", "arpu", *cols]].copy()
+    X["key"] = X["tariff_plan_code_from"] + "|" + X["seg"] + "|" + X["tariff_plan_code_to"]
+    t = tariffs.set_index("tariff_plan_code").astype({c: float for c in PKG})  # float и в train (есть NaN), и в inference
+    for c, name in PKG.items():
+        X[f"{name}_from"] = X["tariff_plan_code_from"].map(t[c])
+        X[f"{name}_to"] = X["tariff_plan_code_to"].map(t[c])
+        X[f"d_{name}"] = X[f"{name}_to"] - X[f"{name}_from"]
+    dv = X["DATA_VOLUME"]
+    X["fit_from"] = (dv <= X["data_from"]).where(dv.notna()).astype(float)
+    X["fit_to"] = (dv <= X["data_to"]).where(dv.notna()).astype(float)
+    X["use_to"] = dv / X["data_to"].clip(lower=1)
+    X["over_to"] = X["data_to"] / dv.clip(lower=1)
+    return X
+
+
+def fit_prior_model(rows, cols, tariffs):
+    """CatBoost на pct: (model, min, max признаков train) — диапазон для OOD-прокси."""
+    from catboost import CatBoostRegressor  # ponytail: импорт здесь — без catboost агент работает в режиме hist
+    X = _features(rows, cols, tariffs)
+    m = CatBoostRegressor(loss_function="RMSE", iterations=500, learning_rate=0.05, depth=6, l2_leaf_reg=8,
+                          random_seed=42, verbose=0, thread_count=4, allow_writing_files=False)
+    m.fit(X, rows["pct"], cat_features=CAT)
+    num = X.drop(columns=CAT)
+    return m, num.min(), num.max()
+
+
+@functools.lru_cache(maxsize=1)
+def _train_prior_model(tariffs_csv, cols):
+    """История статична: обучаем раз на процесс (stress/lab зовут act десятки раз)."""
+    return fit_prior_model(hist_rows(_history(), _usage(cols)), cols, pd.read_csv(io.StringIO(tariffs_csv)))
+
+
+def model_prior(fit, rows, keys, cols, tariffs, weight=None):
+    """
+    pct для строк × target из keys (только переходы из истории их ячейки), агрегат по KEY:
+    model_mean (среднее по строкам или с весом ARPU), ood — доля строк вне диапазона train,
+    worse_fit — target дороже и в среднем хуже по fit, чем текущий.
+    """
+    model, lo, hi = fit
+    x = rows.drop(columns=["tariff_plan_code_to", "pct"], errors="ignore").merge(
+        pd.DataFrame(list(keys), columns=KEY), on=KEY[:2])
+    X = _features(x, cols, tariffs)
+    num = X.drop(columns=CAT)
+    x["p"] = model.predict(X)
+    x["ood"] = ((num < lo) | (num > hi)).any(axis=1).astype(float)
+    x["w"] = x["w"].clip(lower=1.0) if (weight or PRIOR_WEIGHT) == "arpu" else 1.0
+    x["pw"], x["d_price"], x["fit_from"], x["fit_to"] = x["p"] * x["w"], X["d_price"], X["fit_from"], X["fit_to"]
+    g = x.groupby(KEY)
+    out = g[["pw", "w"]].sum()
+    out = pd.DataFrame({"model_mean": out["pw"] / out["w"], "ood": g["ood"].mean(), "d_price": g["d_price"].first()})
+    out["worse_fit"] = (out["d_price"] > 0) & (g["fit_to"].mean() < g["fit_from"].mean())
+    return out
+
+
+def model_mu(h, mp, mode=None):
+    """
+    (shift, mean, диагностика по KEY) для _prior.
+    shift:  model_mean − hist_mean − λ·u (дальше обычное сжатие n/(n+10)).
+    full:   μ = α(n)·model + (1−α)·hist_s − λ·u, hist_s = hist_mean·n/(n+10);
+            guardrails (мало истории, экстраполяция, дороже и хуже по fit) — модель только понижает μ.
+    """
+    mode = mode or PRIOR_MODEL
+    g = h.groupby(KEY)["pct"].agg(["mean", "size"]).join(mp, how="inner")
+    n = g["size"]
+    g["u"] = 1 / np.sqrt(n + 1) + g["ood"]
+    g["hist_s"] = g["mean"] * n / (n + 10)
+    if mode == "catboost_shift":
+        shift = g["model_mean"] - g["mean"] - RISK_LAMBDA * g["u"]
+        g["mu"], g["guard"] = (g["mean"] + shift) * n / (n + 10), False
+        return shift, None, g
+    a = PRIOR_ALPHA_MAX * n / (n + PRIOR_ALPHA_K)
+    mu = a * g["model_mean"] + (1 - a) * g["hist_s"] - RISK_LAMBDA * g["u"]
+    g["guard"] = (n < SUPPORT_MIN) | (g["ood"] > 0.5) | g["worse_fit"]
+    g["mu"] = mu.where(~g["guard"], np.minimum(mu, g["hist_s"])).clip(-1, 3)
+    return None, g["mu"], g
 
 
 def llm_config(model=None):
@@ -261,14 +389,19 @@ class Agent:
         prior = {}
         try:
             h = _history()
-            shift = None
-            if USE_FIT:
+            shift = mean = None
+            if PRIOR_MODEL != "hist":
+                try:
+                    shift, mean = self._model_prior(env, h)
+                except Exception as e:  # нет catboost / traffic.csv — prior из истории, как в режиме hist
+                    self.log.append(f"model skipped: {type(e).__name__}: {e}")
+            if shift is None and mean is None and USE_FIT:
                 try:
                     shift, beta = _fit_shift(h, env.customer_profile, env.tariffs)
                     self.log.append(f"fit: beta={beta:.3f}, pairs={len(shift)}")
                 except Exception as e:  # нет traffic.csv и т.п. — prior без поправки
                     self.log.append(f"fit skipped: {type(e).__name__}: {e}")
-            prior = _prior(h, shift)
+            prior = _prior(h, shift, mean)
         except Exception as e:  # нет истории — рукава всё равно нужны, mu = 0
             self.log.append(f"history skipped: {type(e).__name__}: {e}")
         out = {}
@@ -278,6 +411,21 @@ class Agent:
             for t in ranked[:ARMS_PER_CELL]:
                 out[(cur, seg, t)] = prior.get((cur, seg, t), 0.0)
         return out
+
+    def _model_prior(self, env, h):
+        p = env.customer_profile
+        cols = usage_cols(p.columns)
+        fit = _train_prior_model(env.tariffs.to_csv(index=False), cols)
+        mp = model_prior(fit, profile_rows(p, cols), h.groupby(KEY).size().index, cols, env.tariffs)
+        shift, mean, g = model_mu(h, mp)
+        d = g["mu"] - g["hist_s"]
+        self.log.append(f"model {PRIOR_MODEL}: arms={len(g)} |Δμ|>0.02: {(d.abs() > 0.02).sum()} "
+                        f"mean|Δμ|={d.abs().mean():.3f} guard={int(g['guard'].sum())} weight={PRIOR_WEIGHT}")
+        for k, r in g.nlargest(5, "u").iterrows():
+            self.log.append(f"model uncertain {'/'.join(k)}: n={r['size']} ood={r.ood:.2f} u={r.u:.2f} "
+                            f"hist={r.hist_s:.3f} model={r.model_mean:.3f} mu={r.mu:.3f}")
+        self.prior_table = g  # для stress_eval --prior-debug и UI
+        return shift, mean
 
     def _expert_llm(self, env, cells, tariffs):
         if not USE_LLM:

@@ -4,6 +4,8 @@
     python stress_eval.py [--runs 10]
     python stress_eval.py --keep 0    # жёсткие миры: история бесполезна (0) или наполовину верна (0.5)
     python stress_eval.py --struct    # структурные миры: сдвиг эффекта общий на target и сегмент
+    python stress_eval.py --prior-cv     # CatBoost-prior против группового среднего: K-fold по ID, ранжирующие метрики
+    python stress_eval.py --prior-debug  # важности признаков, крупнейшие сдвиги μ и их SHAP-причины
 
 Сравнивает наш агент с шаблоном, prior-only (без пилотов), оракулом (знает эффекты)
 и ablation экспертов: только prior против full (prior + llm, если есть OPENROUTER_API_KEY или OPENAI_API_KEY).
@@ -192,10 +194,139 @@ def check_llm():
     print("llm: невалидные предложения отсеяны, сбой API → план без LLM")
 
 
+def _prior_data():
+    h = agent._history()
+    cols = agent.usage_cols(profile.columns)
+    return h, cols, agent.hist_rows(h, agent._usage(cols))
+
+
+def check_prior_model():
+    """CatBoost-prior: схема train = inference, нет утечки target и будущего, единицы совпадают, hist не изменился."""
+    h, cols, rows = _prior_data()
+    # режим hist: prior побитово тот же, что до появления модели
+    g = h.groupby(agent.KEY)["pct"].agg(["mean", "size"])
+    total = g.groupby(level=[0, 1])["size"].transform("sum")
+    old = (g["mean"] * g["size"] / (g["size"] + 10) * g["size"] / total).to_dict()
+    new = agent._prior(h)
+    assert new.keys() == old.keys() and max(abs(new[k] - old[k]) for k in old) < 1e-12, "hist prior изменился"
+    try:
+        import catboost  # noqa: F401
+    except ImportError:
+        print("prior model: catboost не установлен — проверен только режим hist")
+        return
+    x_tr = agent._features(rows, cols, dict_tariff)
+    x_in = agent._features(agent.profile_rows(profile, cols).assign(tariff_plan_code_to="tariff_9"), cols, dict_tariff)
+    assert list(x_tr.columns) == list(x_in.columns), "колонки train ≠ inference"
+    bad = [c for c in x_tr.columns if x_tr[c].dtype.kind != x_in[c].dtype.kind]
+    assert not bad, f"типы train ≠ inference: {bad}"
+    leak = [c for c in x_tr.columns if any(s in c.upper() for s in ("NEXT", "PCT"))]
+    assert not leak, f"признаки из target: {leak}"
+    months = pd.to_datetime(pd.read_csv("data/traffic.csv", usecols=["time_key"])["time_key"])
+    assert months.max() < pd.to_datetime(history["TIME_KEY"]).min(), "трафик после перехода"
+    a, b = rows[list(cols)].mean(), profile[list(cols)].mean()  # не медиана: у LTE в истории она ≈ 0
+    both = (a > 0) & (b > 0)
+    ratio = (b[both] / a[both])
+    assert ratio.between(0.1, 10).all(), f"единицы history ≠ profile: {ratio[~ratio.between(0.1, 10)].to_dict()}"
+    print(f"prior model: схема {x_tr.shape[1]} признаков совпадает, утечек нет, "
+          f"средние трафика profile/history {ratio.min():.2f}–{ratio.max():.2f}, hist prior не изменился")
+
+
+def _cell_metrics(pred, truth):
+    """Внутри ячейки (from, seg): pairwise accuracy, precision@3, regret top-1 — по тому, как ранжирует _expert_prior."""
+    pw, pk, rg = [], [], []
+    for _, t in truth.groupby(level=[0, 1]):
+        if len(t) < 2:
+            continue
+        p = pred.reindex(t.index)
+        i, j = np.triu_indices(len(t), 1)
+        dt, dp = t.values[i] - t.values[j], p.values[i] - p.values[j]
+        pw += list(np.sign(dt[dt != 0]) == np.sign(dp[dt != 0]))
+        k = min(3, len(t))
+        pk.append(len(set(p.nlargest(k).index) & set(t.nlargest(k).index)) / k)
+        rg.append(t.max() - t[p.idxmax()])
+    return np.mean(pw), np.mean(pk), np.mean(rg)
+
+
+def prior_cv(folds=5, min_rows=5):
+    """
+    K-fold по ID (строка = абонент). Модель и hist-статистики — на train-фолде, отложенные строки
+    идут в тот же model_prior/model_mu как «аудитория»; правда — средние pct по (from, seg, to) на них.
+    """
+    h, cols, rows = _prior_data()
+    fold = np.random.default_rng(0).permutation(len(rows)) % folds
+    variants = {"hist": None, "shift": ("catboost_shift", "rows", 0.0), "full": ("catboost_full", "rows", 0.0),
+                "full λ=0.1": ("catboost_full", "rows", 0.1), "full arpu": ("catboost_full", "arpu", 0.0)}
+    out = {v: [] for v in variants}
+    row_m = {"hist": [], "model": []}
+    lam = agent.RISK_LAMBDA
+    for f in range(folds):
+        tr, te = rows[fold != f], rows[fold == f]
+        fit = agent.fit_prior_model(tr, cols, dict_tariff)
+        g = tr.groupby(agent.KEY)["pct"].agg(["mean", "size"])
+        conv = g["size"] / g.groupby(level=[0, 1])["size"].transform("sum")
+        hist_s = g["mean"] * g["size"] / (g["size"] + 10)
+        # по строкам: групповое среднее train против модели
+        y = te["pct"].values
+        p_hist = pd.MultiIndex.from_frame(te[agent.KEY]).map(hist_s.to_dict().get)
+        p_hist = np.nan_to_num(np.array(p_hist, dtype=float))
+        p_mod = fit[0].predict(agent._features(te, cols, dict_tariff))
+        for name, p in (("hist", p_hist), ("model", p_mod)):
+            row_m[name].append((np.sqrt(np.mean((p - y) ** 2)), np.mean(np.abs(p - y)), np.mean(np.sign(p) == np.sign(y))))
+        truth = te.groupby(agent.KEY)["pct"].agg(["mean", "size"])
+        truth = truth[truth["size"] >= min_rows]["mean"]
+        for v, cfg in variants.items():
+            if cfg is None:
+                mu = hist_s
+            else:
+                agent.RISK_LAMBDA = cfg[2]
+                mp = agent.model_prior(fit, te, g.index, cols, dict_tariff, weight=cfg[1])
+                mu = agent.model_mu(tr, mp, cfg[0])[2]["mu"]
+            mu = mu.reindex(g.index).fillna(hist_s)
+            t = truth[truth.index.isin(mu.index)]
+            sp = mu.reindex(t.index).rank().corr(t.rank())
+            base = mu * conv  # так ранжирует _expert_prior
+            out[v].append((sp, *_cell_metrics(base, (t * conv.reindex(t.index)))))
+        agent.RISK_LAMBDA = lam
+    print("по строкам (отложенные абоненты):")
+    print(pd.DataFrame({k: np.mean(v, axis=0) for k, v in row_m.items()}, index=["RMSE", "MAE", "sign"]).T.round(4).to_string())
+    print(f"\nпо группам (from, seg, to) с ≥{min_rows} отложенными строками; внутри ячеек — по μ×conversion, как _expert_prior:")
+    print(pd.DataFrame({k: np.mean(v, axis=0) for k, v in out.items()},
+                       index=["spearman", "pairwise", "prec@3", "regret@1"]).T.round(4).to_string())
+
+
+def prior_debug(top=20):
+    """Важности признаков, крупнейшие сдвиги μ_full − μ_hist на аудитории и что их двигает (SHAP)."""
+    from catboost import Pool
+    agent.PRIOR_MODEL = "catboost_full"
+    a, h = agent.Agent(), agent._history()
+    a._model_prior(type("Env", (), {"customer_profile": profile, "tariffs": dict_tariff})(), h)
+    print("\n".join(a.log))
+    cols = agent.usage_cols(profile.columns)
+    model = agent._train_prior_model(dict_tariff.to_csv(index=False), cols)[0]
+    print("\nPredictionValuesChange, топ-15:")
+    print(model.get_feature_importance(prettified=True).head(15).to_string(index=False))
+    g = a.prior_table.assign(d=lambda x: x["mu"] - x["hist_s"])
+    rows = agent.profile_rows(profile, cols)
+    for title, part in (("рост", g.nlargest(top, "d")), ("падение", g.nsmallest(top, "d"))):
+        print(f"\nтоп-{top}, {title} μ_full − μ_hist:")
+        for k, r in part.iterrows():
+            x = agent._features(rows[(rows["tariff_plan_code_from"] == k[0]) & (rows["seg"] == k[1])]
+                                .assign(tariff_plan_code_to=k[2]), cols, dict_tariff)
+            shap = model.get_feature_importance(Pool(x, cat_features=agent.CAT), type="ShapValues")[:, :-1].mean(axis=0)
+            why = ", ".join(f"{x.columns[i]} {shap[i]:+.3f}" for i in np.argsort(-np.abs(shap))[:3])
+            print(f"  {'/'.join(k):32} n={r['size']:<4} Δ={r.d:+.3f} hist={r.hist_s:+.3f} model={r.model_mean:+.3f} "
+                  f"u={r.u:.2f} ood={r.ood:.2f} Δprice={r.d_price:+.0f} guard={r.guard} | {why}")
+
+
 if __name__ == "__main__":
+    if "--prior-cv" in sys.argv:
+        sys.exit(prior_cv())
+    if "--prior-debug" in sys.argv:
+        sys.exit(prior_debug())
     check_never_empty()
     check_time_limit()
     check_llm()
+    check_prior_model()
     if not agent.llm_config()[1]:
         print("нет LLM-ключа: agent (full) = exp_prior")
     # ponytail: промпт одинаков на всех seed (профиль тот же) — один ответ LLM на прогон
