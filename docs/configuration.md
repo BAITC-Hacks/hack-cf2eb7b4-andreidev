@@ -17,7 +17,6 @@
 | `AUTH_SECRET` | UI | `dev-secret-change-me` | секрет сессий; на стенде задайте свой |
 | `UPLOAD_DIR` | UI | `uploads/` | куда кладутся загруженные выгрузки (в docker — volume) |
 | `ENV_FILE` | UI | `.env` в корне репо | откуда `server.py` читает `.env` (десктоп — каталог данных приложения) |
-| `ENV_FILE` | UI | `.env` рядом с `server.py` | откуда `server.py` читает переменные |
 | `LAB_QUICK` | лаборатория | — | `1` — быстрая матрица тестов (для self-check) |
 
 ## Константы агента
