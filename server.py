@@ -38,15 +38,35 @@ from mock_environment import CHANNELS, MAX_TOTAL_CONTACTS, TOTAL_BUDGET, _mock_f
 from scoring_core import score_campaigns, sanitize_campaigns  # noqa: E402
 
 agent._llm_call = functools.lru_cache(agent._llm_call)  # промпт одинаков для всех seed
-app = FastAPI(title="Beeline campaign cockpit")
+API_DOC = """
+API кокпита: запускает агента тарифных кампаний в мок- или стресс-мире и отдаёт его внутреннее состояние
+(prior/posterior рукавов, пилоты, план, скоринг), плюс лабораторию версий агента.
+
+**Вход.** `POST /api/auth/login` → «Try it out», `username` = email, `password` → ответ 204 ставит cookie `session`,
+дальше все запросы из этой страницы идут с ним. `POST /api/auth/logout` отзывает сессию.
+
+| Роль | Доступ |
+|---|---|
+| `manager` | `/api/me`, `/api/run` |
+| `analyst` | + `/api/strategies` |
+| `admin` | + `/api/lab/*` |
+
+Без входа — 401, не хватает роли — 403.
+"""
+TAGS = [{"name": "auth", "description": "Вход и выход (fastapi-users, cookie `session`)."},
+        {"name": "agent", "description": "Прогон агента и сравнение стратегий."},
+        {"name": "lab", "description": "Лаборатория версий агента: правки констант, оценка, промоут. Только admin."}]
+app = FastAPI(title="Beeline campaign cockpit", version="1.0", description=API_DOC, openapi_tags=TAGS,
+              docs_url="/api/docs", redoc_url=None, openapi_url="/api/openapi.json")  # под /api — проксирует vite
 db.init()
 auth.bootstrap()
 ANY, ANALYST, ADMIN = (auth.require(*r) for r in (db.ROLES, ("analyst", "admin"), ("admin",)))
 app.include_router(auth.fastapi_users.get_auth_router(auth.backend), prefix="/api/auth", tags=["auth"])
 
 
-@app.get("/api/me", response_model=auth.UserRead)
+@app.get("/api/me", response_model=auth.UserRead, tags=["auth"], summary="Текущий пользователь")
 def api_me(user: db.User = Depends(auth.current_user)):
+    """Email и роль вошедшего пользователя. Любая роль."""
     return user
 
 
@@ -209,14 +229,23 @@ def strategies_payload(runs=5):
                                        "positive": int((df[n] > 0).sum())} for n in names]}
 
 
-@app.get("/api/run", dependencies=[Depends(ANY)])
-def api_run(seed: int = 42, world: str = Query("mock", pattern="^(mock|stress)$"), llm: bool = True,
-            model: str | None = Query(None, max_length=100, pattern=r"^[\w.\-/:]+$")):
+@app.get("/api/run", dependencies=[Depends(ANY)], tags=["agent"], summary="Прогон агента")
+def api_run(seed: int = Query(42, description="seed среды: выборка пилотов и, для `stress`, искажение эффектов"),
+            world: str = Query("mock", pattern="^(mock|stress)$",
+                               description="`mock` — эффекты из истории, `stress` — искажённый мир из `stress_eval`"),
+            llm: bool = Query(True, description="включить LLM-эксперта (нужен ключ OpenRouter/OpenAI на сервере)"),
+            model: str | None = Query(None, max_length=100, pattern=r"^[\w.\-/:]+$",
+                                      description=f"slug модели OpenRouter; пресеты: {', '.join(MODELS)}")):
+    """Запускает агента и возвращает его состояние: `arms` (prior/posterior рукавов), `pilots`, `replay`
+    (снимок перед каждым пилотом), `plan` (≤10 кампаний), `score`, `log`, `llm_audit`, `privacy`.
+    Результат кешируется по параметрам. Любая роль."""
     return run_payload(seed, world, llm, model)
 
 
-@app.get("/api/strategies", dependencies=[Depends(ANALYST)])
-def api_strategies(runs: int = Query(5, ge=1, le=10)):
+@app.get("/api/strategies", dependencies=[Depends(ANALYST)], tags=["agent"], summary="Сравнение стратегий")
+def api_strategies(runs: int = Query(5, ge=1, le=10, description="число стресс-миров (seed 0…runs−1)")):
+    """Net-выигрыш агента, агента без LLM, без пилотов, шаблона и оракула на стресс-мирах: строки по seed
+    и сводка (медиана, минимум, число миров в плюс). Долгий первый вызов, дальше кеш. analyst, admin."""
     return strategies_payload(runs)
 
 
@@ -229,22 +258,28 @@ def _slim(v, cur):
     return {**{k: x for k, x in v.items() if k not in _SLIM}, "current": v["id"] == cur}
 
 
-@app.get("/api/lab/versions", dependencies=[Depends(ADMIN)])
+@app.get("/api/lab/versions", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Список версий")
 def lab_versions():
+    """Все версии агента без прогонов и аудита; `current` — активная, `pending` — задач в очереди оценки."""
     cur = lab.current_id()
     return {"versions": [_slim(v, cur) for v in lab.versions()], "pending": lab._q.unfinished_tasks}
 
 
-@app.get("/api/lab/versions/{vid}", dependencies=[Depends(ADMIN)])
+@app.get("/api/lab/versions/{vid}", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Версия целиком")
 def lab_version(vid: str):
+    """Конфиг, прогоны тестов и аудит версии `vid` (например `v001`). 404, если нет."""
     try:
         return {**lab.load(vid), "current": vid == lab.current_id()}
     except FileNotFoundError:
         raise HTTPException(404, f"нет версии {vid}")
 
 
-@app.post("/api/lab/versions", dependencies=[Depends(ADMIN)])
-def lab_create(body: dict = Body(...), user: db.User = Depends(ADMIN)):
+@app.post("/api/lab/versions", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Создать версию")
+def lab_create(body: dict = Body(..., examples=[{"parent_id": "v001", "changes": {"LCB_K": 0.7},
+                                                 "hypothesis": "строже LCB — меньше минусовых кампаний"}]),
+               user: db.User = Depends(ADMIN)):
+    """Новая версия от `parent_id` с правками констант `changes` (допустимые ключи и границы — `GET /api/lab/targets`)
+    и сразу ставит её в очередь оценки. 400 — невалидные правки или нет изменений."""
     try:
         v = lab.create(body.get("parent_id"), body.get("changes") or {}, created_by="human", kind="manual", author=user.email,
                        hypothesis=str(body.get("hypothesis") or "")[:300])
@@ -255,21 +290,25 @@ def lab_create(body: dict = Body(...), user: db.User = Depends(ADMIN)):
     return v
 
 
-@app.post("/api/lab/versions/{vid}/evaluate", dependencies=[Depends(ADMIN)])
+@app.post("/api/lab/versions/{vid}/evaluate", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Переоценить")
 def lab_evaluate(vid: str):
+    """Ставит версию в очередь на повторный прогон тестов; результат — в `GET /api/lab/versions/{vid}`."""
     lab.mark_evaluating(vid)
     lab.enqueue(lab.evaluate, vid)
     return {"queued": vid}
 
 
-@app.post("/api/lab/versions/{vid}/remediate", dependencies=[Depends(ADMIN)])
-def lab_remediate(vid: str, steps: int = Query(1, ge=1, le=3)):
+@app.post("/api/lab/versions/{vid}/remediate", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Автопочинка")
+def lab_remediate(vid: str, steps: int = Query(1, ge=1, le=3, description="сколько шагов починки подряд")):
+    """В фоне: предлагает дочернюю версию, исправляющую провалы `vid`, и оценивает её; прошла gate — следующий шаг от неё."""
     lab.enqueue(lab.remediate, vid, steps)
     return {"queued": vid, "steps": steps}
 
 
-@app.post("/api/lab/versions/{vid}/promote", dependencies=[Depends(ADMIN)])
+@app.post("/api/lab/versions/{vid}/promote", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Сделать активной")
 def lab_promote(vid: str):
+    """Записывает константы версии в `agent.py`, пересобирает `submission.csv`, применяет их в этом процессе и сбрасывает
+    кеш прогонов. 400 — версия не в статусе `candidate`."""
     try:
         v = lab.promote(vid)
     except ValueError as e:
@@ -280,21 +319,24 @@ def lab_promote(vid: str):
     return _slim(v, vid)
 
 
-@app.get("/api/lab/targets", dependencies=[Depends(ADMIN)])
+@app.get("/api/lab/targets", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Что можно править")
 def lab_targets():
+    """Правимые константы агента с типом и границами, обязательные тесты, пороги и шаблоны проблем."""
     return {"targets": lab.PATCH_TARGETS, "must": lab.MUST, "thresholds": lab.TH,
             "templates": {k: {"title": t["title"], "issues": t["issues"]} for k, t in lab.TEMPLATES.items()}}
 
 
-@app.get("/api/lab/runs", dependencies=[Depends(ADMIN)])
+@app.get("/api/lab/runs", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Прогоны тестов")
 def lab_runs():
+    """Плоский список прогонов всех версий: тест, мир, seed, net, число кампаний, падения, время."""
     keep = ("test", "world", "seed", "llm", "net", "n_campaigns", "invalid", "crash", "runtime", "fallback", "pilots",
             "pilot_cost", "total_contacts", "log")
     return [{"version": v["id"], **{k: r.get(k) for k in keep}} for v in lab.versions() for r in v.get("runs", [])]
 
 
-@app.get("/api/lab/audit", dependencies=[Depends(ADMIN)])
+@app.get("/api/lab/audit", dependencies=[Depends(ADMIN)], tags=["lab"], summary="Журнал действий")
 def lab_audit():
+    """Последние 50 записей аудита лаборатории, новые первыми."""
     with Session(db.engine) as s:
         return [r.data for r in s.scalars(select(db.LabAudit).order_by(db.LabAudit.id.desc()).limit(50))]
 
@@ -316,6 +358,9 @@ if __name__ == "__main__":
     assert r["score"]["net_arpu_gain"] > 0, r["score"]
     assert len(r["replay"]) == len(r["pilots"]) and all(s["cell"] for s in r["replay"]), "replay: шаг на каждый пилот"
     assert "ID_NUMBER" in r["privacy"]["redacted_fields"]
+    from fastapi.testclient import TestClient
+    spec = TestClient(app).get("/api/openapi.json").json()
+    assert {p["name"]: p.get("description") for p in spec["paths"]["/api/run"]["get"]["parameters"]}["world"], "swagger"
     sub = pd.read_csv("submission.csv")["campaign_name"].tolist()
     print("plan == submission.csv:", [c["campaign_name"] for c in r["plan"]] == sub)
     print(f"ok: {len(r['arms'])} arms, {len(r['pilots'])} pilots, {len(r['plan'])} campaigns, "

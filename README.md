@@ -84,6 +84,8 @@ docker compose up --build               # http://localhost:8000; ключи LLM 
 
 Экраны повторяют конвейер агента (1 Аудитория → 2 Гипотезы → 3 Пилоты → 4 Финальный план), плюс Командный центр, Стратегии (вклад экспертов и ablation на стресс-мирах), Privacy (что видит LLM, prompt inspector) и Логи. В «Пилотах» есть пошаговый replay разведки. Экран можно открыть по ссылке `#hypotheses`, `#plan` и т. п. `python3 server.py` — self-check API без запуска сервера.
 
+Swagger с описанием всех эндпоинтов: http://localhost:8000/api/docs (в dev — http://localhost:5173/api/docs). Войти прямо там: `POST /api/auth/login` → «Try it out», дальше запросы идут с cookie сессии.
+
 ### Роли и вход
 Вход — [fastapi-users](https://fastapi-users.github.io/fastapi-users/): cookie `session`, токены сессий в Postgres (выход их отзывает). Вид выбирается по роли, URL один.
 
