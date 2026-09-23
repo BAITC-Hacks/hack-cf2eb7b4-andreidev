@@ -2,6 +2,72 @@
 
 `agent.py`: портфель экспертов (история + LLM) предлагает гипотезы → адаптивные пилоты → жадный план под лимиты. pandas/numpy + stdlib. Без LLM-ключа (`OPENROUTER_API_KEY` / `OPENAI_API_KEY`) детерминирован.
 
+**Назначение.** Решение кейса «Beeline Tariff Marketing Campaigns»: агент сам проводит пилоты на аудитории и отдаёт план до 10 кампаний (кому, какой тариф, какой канал), чтобы чистый прирост ARPU был максимальным при лимитах бюджета, охвата и числа пилотов. Пользователь — аналитик маркетинга. Для него есть веб-интерфейс Campaign Cockpit: видно, почему агент принял каждое решение. Для менеджера — упрощённый экран «сформировать план → CSV».
+
+## Быстрый старт (проверка с чистого клона)
+Требования: Python 3.13 (на нём проверено), для UI — Node 22 или Docker.
+
+1. **Положить пакет участника в корень репо.** Пакет выдают организаторы кейса, в git он не коммитится (`.gitignore`). Нужны файлы: `local_eval.py`, `make_submission.py`, `environment.py`, `mock_environment.py`, `scoring_core.py`, `customer_profile.csv`, `feature_dictionary.csv`, `tariff_dictionary.csv` и папка `data/` (`change_tariff.csv`, `traffic.csv`, `arpu_monthly.csv`, `dict_tariff.csv`).
+2. **Установить зависимости агента:**
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. **Проверить основной сценарий** (must-have из ТЗ):
+   ```bash
+   python local_eval.py              # ожидается «Статус: PASS», net ≈ 4.4M, «Пилотов проведено: 20 из 20», нет строк «отброшена»
+   python local_eval.py --runs 10    # устойчивость: все 10 прогонов в плюс
+   python make_submission.py         # пересобирает submission.csv; должен совпасть с закоммиченным (git diff пуст)
+   ```
+4. **UI (по желанию):** `docker compose up --build` → http://localhost:8000, вход `manager@cockpit.demo` / `manager` → «Сформировать план». Подробнее — раздел «UI: Campaign Cockpit».
+
+LLM-ключ не обязателен: без него LLM-эксперт выключается, и агент работает на истории и пилотах.
+
+## Архитектура
+```
+пакет организатора (env, data/) ──▶ agent.py ──▶ план кампаний ──▶ make_submission.py ──▶ submission.csv
+                                       │  ▲
+                        агрегаты ячеек ▼  │ до 2 target на ячейку
+                                 LLM (OpenRouter / OpenAI, опционально)
+
+web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мок- или стресс-мире
+                            │                  lab.py: версии настроек, матрица тестов, gate
+                            ▼
+                        Postgres (db.py, auth.py): пользователи, сессии, версии, аудит LLM
+```
+- `agent.py` — сдаваемый агент (`Agent.act(env)`). От БД и UI не зависит.
+- `stress_eval.py` — локальный стенд: искажённые и жёсткие миры для проверки устойчивости.
+- `lab.py` — лаборатория версий настроек агента (цикл самоулучшения с gate).
+- `server.py`, `auth.py`, `db.py`, `web/` — Campaign Cockpit: API, роли, хранилище, фронтенд.
+
+## Технологии
+- **Агент:** Python, pandas, numpy, stdlib (`urllib` для LLM); CatBoost — только в опциональном режиме `PRIOR_MODEL=catboost_*`. Байесовские апостериоры, expected improvement для выбора пилотов, LCB-отбор и жадный план.
+- **LLM:** OpenAI-совместимый API — OpenRouter (по умолчанию `openai/gpt-4o-mini`) или OpenAI (`gpt-4o-mini`).
+- **Бэкенд UI:** FastAPI, Uvicorn, fastapi-users (SQLAlchemy), psycopg, PostgreSQL 17.
+- **Фронтенд:** React 19, HeroUI v3, Vite 8, TypeScript.
+- **Запуск:** Docker, Docker Compose.
+
+## Переменные окружения
+Все необязательные. Локально их можно положить в `.env`: его читают `docker compose` и `server.py`.
+
+| Переменная | Где | По умолчанию | Назначение |
+|---|---|---|---|
+| `OPENAI_API_KEY` | агент | — | ключ LLM-эксперта (на судействе подставляют организаторы) |
+| `OPENAI_MODEL` | агент | `gpt-4o-mini` | модель OpenAI |
+| `OPENAI_BASE_URL` | агент | `https://api.openai.com/v1` | OpenAI-совместимый endpoint |
+| `OPENROUTER_API_KEY` | агент | — | если задан, LLM идёт через OpenRouter (приоритет над OpenAI) |
+| `LLM_MODEL` | агент | `openai/gpt-4o-mini` | модель OpenRouter |
+| `DATABASE_URL` | UI | `postgresql://cockpit:cockpit@localhost:5432/cockpit` | Postgres |
+| `DB_SCHEMA` | UI | `public` | схема БД (разводит стенды) |
+| `AUTH_USERS` | UI | демо-пользователи | `email:пароль:роль,...`, заводятся при пустой таблице |
+| `AUTH_SECRET` | UI | `dev-secret-change-me` | секрет сессий; на стенде задайте свой |
+
+## Сторонние компоненты
+Код в репозитории разработан во время соревновательной части. Использованы:
+- **пакет участника от организаторов** (в git не входит): среда `environment.py` / `mock_environment.py`, `scoring_core.py`, `local_eval.py`, `make_submission.py`, синтетические данные;
+- **open-source библиотеки** по их лицензиям: pandas, numpy (BSD), CatBoost (Apache 2.0), FastAPI, fastapi-users, Uvicorn (MIT / BSD), SQLAlchemy, psycopg (MIT / LGPL), React, Vite, HeroUI (MIT), PostgreSQL (PostgreSQL License). Полный список фронтенда — в `web/package.json`;
+- **внешняя модель:** `gpt-4o-mini` через OpenAI или OpenRouter — только как эксперт-источник гипотез; в неё уходят агрегаты по ячейкам, без строк абонентов;
+- **AI-ассистенты** при разработке (разрешено п. 5.4.12 Положения).
+
 ## Ключевое наблюдение
 Эффект кампании зависит только от **ячейки** `(current_tariff, arpu_segment)`, целевого тарифа и канала. Канал лишь умножает эффект (`ratio = pct × conv × mult`). Отсюда:
 - гипотеза — это `ячейка × target`: всего 63 ячейки, фильтры data/call на эффект не влияют;
