@@ -1,6 +1,6 @@
 import { Button, Card, Chip } from '@heroui/react'
 import { Brain, FileCode, Wrench } from 'lucide-react'
-import { DiffLine, HowTo, VersionStatusChip, money } from '../ui'
+import { DiffLine, HowTo, Tip, VersionStatusChip, money } from '../ui'
 import type { LabState } from './useLab'
 import { WHO } from './Versions'
 
@@ -52,7 +52,7 @@ export default function Fixes({ s, open }: { s: LabState; open: (id: string) => 
                 </div>
               </div>
               <div className="flex gap-2">
-                <Button size="sm" variant="ghost" onPress={() => open(v.id)}>Открыть карточку версии</Button>
+                <Tip tip="Перейти в «Версии»: тесты, метрики и кнопка Promote"><Button size="sm" variant="ghost" onPress={() => open(v.id)}>Открыть карточку версии</Button></Tip>
               </div>
             </Card>
           )

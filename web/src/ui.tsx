@@ -71,6 +71,16 @@ export function Hint({ children }: { children: ReactNode }) {
   )
 }
 
+/** Тултип на самом контроле. Ребёнок — кнопка/переключатель HeroUI (RAC сам вешает hover и focus) */
+export function Tip({ tip, children }: { tip: ReactNode; children: ReactNode }) {
+  return (
+    <Tooltip delay={300}>
+      {children}
+      <Tooltip.Content className="max-w-72 text-xs leading-relaxed">{tip}</Tooltip.Content>
+    </Tooltip>
+  )
+}
+
 export function SrcChips({ src }: { src: string[] }) {
   return (
     <span className="flex flex-wrap gap-1">

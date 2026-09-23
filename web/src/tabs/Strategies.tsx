@@ -3,7 +3,7 @@ import { FlaskRound, Trophy } from 'lucide-react'
 import { useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { fetchStrategies, type Run, type Strategies as S } from '../api'
-import { DataTable, Delta, HowTo, SRC, Section, fmt, money } from '../ui'
+import { DataTable, Delta, HowTo, SRC, Section, Tip, fmt, money } from '../ui'
 
 const NOTES: Record<string, string> = {
   agent: 'полный агент: история + LLM, пилоты, порог',
@@ -92,7 +92,9 @@ export default function Strategies({ run }: { run: Run }) {
               selectedKeys={[runs]} onSelectionChange={(k) => setRuns(String([...k][0]))}>
               {['1', '3', '5', '10'].map((r) => <ToggleButton key={r} id={r}>{r}</ToggleButton>)}
             </ToggleButtonGroup>
-            <Button size="sm" variant="primary" isPending={loading} onPress={load}>Сравнить</Button>
+            <Tip tip="Прогнать агента, шаблон, prior-only и оракула на выбранном числе стресс-миров (≈ 20 с на мир)">
+              <Button size="sm" variant="primary" isPending={loading} onPress={load}>Сравнить</Button>
+            </Tip>
           </div>
         }>
         {err && <span className="text-sm text-danger">{err}</span>}

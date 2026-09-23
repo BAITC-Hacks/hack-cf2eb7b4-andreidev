@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { login, logout, me, type User } from './api'
 import App from './App'
 import Manager from './Manager'
+import { Tip } from './ui'
 
 const ROLE_LABEL = { manager: 'Менеджер', analyst: 'Аналитик', admin: 'Администратор' } as const
 
@@ -74,7 +75,9 @@ export function UserBadge({ user, onSignOut }: { user: User; onSignOut: () => vo
         <div className="truncate text-sm font-medium">{user.email}</div>
         <div className="text-xs text-muted">{ROLE_LABEL[user.role]}</div>
       </div>
-      <Button isIconOnly variant="ghost" aria-label="Выйти" onPress={onSignOut}><LogOut className="size-4" aria-hidden /></Button>
+      <Tip tip="Выйти — сессия будет отозвана на сервере">
+        <Button isIconOnly variant="ghost" aria-label="Выйти" onPress={onSignOut}><LogOut className="size-4" aria-hidden /></Button>
+      </Tip>
     </div>
   )
 }

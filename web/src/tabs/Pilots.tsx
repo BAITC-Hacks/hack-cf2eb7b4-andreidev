@@ -3,7 +3,7 @@ import { BarChart3, ChevronLeft, ChevronRight, FlaskConical, Footprints } from '
 import { useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Pilot, Run } from '../api'
-import { DataTable, Decision, Delta, Flow, HowTo, Section, SrcChips, fmt, money } from '../ui'
+import { DataTable, Decision, Delta, Flow, HowTo, Section, SrcChips, Tip, fmt, money } from '../ui'
 
 const tick = (v: number) => `${fmt(100 * v)}%`
 
@@ -87,10 +87,10 @@ function Replay({ run }: { run: Run }) {
     <Section icon={Footprints} title="Replay разведки" desc="Шаг за шагом: какую гипотезу агент выбрал по EI, что показал пилот и как изменилась оценка"
       action={
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" isIconOnly aria-label="Назад" isDisabled={i === 0} onPress={() => setI(i - 1)}><ChevronLeft className="size-4" /></Button>
+          <Tip tip="Предыдущий пилот"><Button size="sm" variant="ghost" isIconOnly aria-label="Назад" isDisabled={i === 0} onPress={() => setI(i - 1)}><ChevronLeft className="size-4" /></Button></Tip>
           <input type="range" min={0} max={steps.length - 1} value={i} onChange={(e) => setI(Number(e.target.value))}
             aria-label="Шаг replay" className="w-40 accent-[var(--accent)] sm:w-64" />
-          <Button size="sm" variant="ghost" isIconOnly aria-label="Вперёд" isDisabled={last} onPress={() => setI(i + 1)}><ChevronRight className="size-4" /></Button>
+          <Tip tip="Следующий пилот"><Button size="sm" variant="ghost" isIconOnly aria-label="Вперёд" isDisabled={last} onPress={() => setI(i + 1)}><ChevronRight className="size-4" /></Button></Tip>
           <span className="num w-14 text-right text-sm">{st.i} / {steps.length}</span>
         </div>
       }>

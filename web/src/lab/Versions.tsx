@@ -3,7 +3,7 @@ import { FlaskConical, GitBranch, Play, Rocket, SlidersHorizontal, Sparkles, Wan
 import { useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { lab, type Target, type Targets, type Test, type Version, type VersionStatus } from '../api'
-import { DataTable, DiffLine, HowTo, Section, TestChip, VersionStatusChip, fmt, money } from '../ui'
+import { DataTable, DiffLine, HowTo, Section, TestChip, Tip, VersionStatusChip, fmt, money } from '../ui'
 import { FAMILIES, worldNets, useVersion, type Family, type LabState } from './useLab'
 
 const STATUSES: VersionStatus[] = ['draft', 'evaluating', 'candidate', 'failed', 'promoted']
@@ -96,19 +96,25 @@ function StrategyCard({ v, s }: { v: Version; s: LabState }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="secondary" isDisabled={v.status === 'evaluating'} onPress={() => s.act(lab.evaluate(v.id))}>
-            <Play className="size-3.5" aria-hidden />Прогнать тесты
-          </Button>
+          <Tip tip="Запустить матрицу тестов: мок, стресс-миры, жёсткие миры, проверки LLM и лимитов. Около 10 с">
+            <Button size="sm" variant="secondary" isDisabled={v.status === 'evaluating'} onPress={() => s.act(lab.evaluate(v.id))}>
+              <Play className="size-3.5" aria-hidden />Прогнать тесты
+            </Button>
+          </Tip>
           <ToggleButtonGroup aria-label="Шагов ремедиации" selectionMode="single" disallowEmptySelection size="sm"
             selectedKeys={[steps]} onSelectionChange={(k) => setSteps(String([...k][0]))}>
-            {['1', '2', '3'].map((x) => <ToggleButton key={x} id={x}>{x}</ToggleButton>)}
+            {['1', '2', '3'].map((x) => <Tip key={x} tip={`Шагов авто-исправления: ${x}. Каждый шаг — новая версия поверх предыдущей`}><ToggleButton id={x}>{x}</ToggleButton></Tip>)}
           </ToggleButtonGroup>
-          <Button size="sm" variant="secondary" isDisabled={v.status === 'evaluating'} onPress={() => s.act(lab.remediate(v.id, Number(steps)))}>
-            <Wand2 className="size-3.5" aria-hidden />Авто-исправить
-          </Button>
-          <Button size="sm" variant="primary" isDisabled={v.status !== 'candidate'} onPress={() => s.act(lab.promote(v.id))}>
-            <Rocket className="size-3.5" aria-hidden />Promote
-          </Button>
+          <Tip tip="Issues → ограниченный патч от LLM или шаблона → новая версия проходит матрицу и gate против родителя">
+            <Button size="sm" variant="secondary" isDisabled={v.status === 'evaluating'} onPress={() => s.act(lab.remediate(v.id, Number(steps)))}>
+              <Wand2 className="size-3.5" aria-hidden />Авто-исправить
+            </Button>
+          </Tip>
+          <Tip tip={v.status === 'candidate' ? 'Записать настройки версии в agent.py и пересобрать submission.csv. Коммит — вручную' : 'Доступно только для candidate — версии, прошедшей gate'}>
+            <Button size="sm" variant="primary" isDisabled={v.status !== 'candidate'} onPress={() => s.act(lab.promote(v.id))}>
+              <Rocket className="size-3.5" aria-hidden />Promote
+            </Button>
+          </Tip>
         </div>
       </div>
       {s.pending > 0 && <p className="text-xs text-muted">В очереди задач: {s.pending}. Матрица — около 10 секунд на версию.</p>}
@@ -221,9 +227,11 @@ function NewVersion({ parent, s }: { parent: Version; s: LabState }) {
     <Section icon={SlidersHorizontal} title={`Новая версия от ${parent.id} · policy engine`}
       desc="Можно менять только разрешённые зоны. Значения клипуются по границам, новая версия сразу уходит в матрицу тестов"
       action={
-        <Button size="sm" variant="primary" isDisabled={!Object.keys(changed).length} onPress={submit}>
-          <Sparkles className="size-3.5" aria-hidden />Создать и протестировать ({Object.keys(changed).length})
-        </Button>
+        <Tip tip="Новая версия = родитель + изменённые настройки. Сразу уходит в матрицу тестов">
+          <Button size="sm" variant="primary" isDisabled={!Object.keys(changed).length} onPress={submit}>
+            <Sparkles className="size-3.5" aria-hidden />Создать и протестировать ({Object.keys(changed).length})
+          </Button>
+        </Tip>
       }>
       {err && <p className="text-sm text-danger">{err}</p>}
       <input value={hyp} onChange={(e) => setHyp(e.target.value)} placeholder="Гипотеза: что должно улучшиться и почему"

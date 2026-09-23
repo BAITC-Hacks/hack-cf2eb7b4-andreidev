@@ -1,10 +1,11 @@
 import { Alert, Button, Card, Chip, Skeleton } from '@heroui/react'
-import { CircleCheck, Coins, Download, Play, Radar, TrendingUp, TriangleAlert, UsersRound } from 'lucide-react'
+import { ArrowLeft, BookOpen, CircleCheck, Coins, Download, Play, Radar, TrendingUp, TriangleAlert, UsersRound } from 'lucide-react'
 import { useState } from 'react'
 import { fetchRun, type Campaign, type Run, type User } from './api'
 import { UserBadge } from './Auth'
+import { Docs, Help } from './Guide'
 import { armIndex, isRisky } from './tabs/Plan'
-import { ChannelChip, DataTable, Flow, HowTo, Kpi, fmt, money } from './ui'
+import { ChannelChip, DataTable, Flow, HowTo, Kpi, Tip, fmt, money } from './ui'
 
 const SEGMENT: Record<string, string> = { LOW: 'Низкий чек · до 1 000', MID: 'Средний чек · 1 000–5 000', HIGH: 'Высокий чек · от 5 000' }
 const net = (c: Campaign) => c.expected_gain - c.expected_cost
@@ -14,6 +15,7 @@ export default function Manager({ user, onSignOut }: { user: User; onSignOut: ()
   const [run, setRun] = useState<Run>()
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(false)
+  const [docs, setDocs] = useState(false)
   const go = () => {
     setLoading(true)
     setError(undefined)
@@ -31,11 +33,26 @@ export default function Manager({ user, onSignOut }: { user: User; onSignOut: ()
               <div className="truncate text-xs text-muted">кому и что предложить в следующем месяце</div>
             </div>
           </div>
-          <UserBadge user={user} onSignOut={onSignOut} />
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" onPress={() => setDocs(!docs)} className="hidden sm:inline-flex">
+              {docs ? <><ArrowLeft className="size-4" aria-hidden />К плану</> : <><BookOpen className="size-4" aria-hidden />Как это работает</>}
+            </Button>
+            <Help role={user.role} onDocs={() => setDocs(true)} />
+            <UserBadge user={user} onSignOut={onSignOut} />
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-5xl flex-col gap-5 px-4 py-6 sm:px-6">
+      {docs && (
+        <main className="rise mx-auto flex max-w-5xl flex-col gap-5 px-4 py-6 sm:px-6">
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-xl font-semibold tracking-tight">Как это работает</h1>
+            <Button variant="secondary" onPress={() => setDocs(false)}><ArrowLeft className="size-4" aria-hidden />К плану</Button>
+          </div>
+          <Docs role={user.role} />
+        </main>
+      )}
+      <main className={`mx-auto flex max-w-5xl flex-col gap-5 px-4 py-6 sm:px-6 ${docs ? 'hidden' : ''}`}>
         <Card className="flex-row flex-wrap items-center justify-between gap-4 p-5">
           <div className="min-w-0 grow basis-72">
             <h1 className="text-xl font-semibold tracking-tight">{run ? 'План готов' : 'Сформировать план кампаний'}</h1>
@@ -45,13 +62,17 @@ export default function Manager({ user, onSignOut }: { user: User; onSignOut: ()
           </div>
           <div className="flex flex-wrap gap-2">
             {run && (
-              <Button variant="secondary" onPress={() => downloadCsv(run.plan)} className="h-10">
-                <Download className="size-4" aria-hidden />Скачать план (CSV)
-              </Button>
+              <Tip tip="Файл с кампаниями: сегмент, текущие тарифы, целевой тариф, канал, аудитория, затраты и эффект">
+                <Button variant="secondary" onPress={() => downloadCsv(run.plan)} className="h-10">
+                  <Download className="size-4" aria-hidden />Скачать план (CSV)
+                </Button>
+              </Tip>
             )}
-            <Button variant="primary" isPending={loading} onPress={go} className="h-10 px-4 font-semibold">
-              {!loading && <Play className="size-4" aria-hidden />}{run ? 'Пересчитать' : 'Сформировать план'}
-            </Button>
+            <Tip tip="Агент проверит гипотезы пилотами и соберёт до 10 кампаний под бюджет. Обычно до минуты">
+              <Button variant="primary" isPending={loading} onPress={go} className="h-10 px-4 font-semibold">
+                {!loading && <Play className="size-4" aria-hidden />}{run ? 'Пересчитать' : 'Сформировать план'}
+              </Button>
+            </Tip>
           </div>
         </Card>
 

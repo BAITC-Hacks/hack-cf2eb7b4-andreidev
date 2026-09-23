@@ -1,12 +1,13 @@
 import { Alert, Button, Card, Chip, NumberField, Skeleton, Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react'
 import {
-  Bug, Calculator, Coins, FlaskConical, Gauge, GitBranch, GitCompare, History, Lightbulb, ListChecks, LoaderCircle, Megaphone, Play, Radar,
+  BookOpen, Bug, Calculator, Coins, FlaskConical, Gauge, GitBranch, GitCompare, History, Lightbulb, ListChecks, LoaderCircle, Megaphone, Play, Radar,
   ScrollText, ShieldCheck, Swords, Users, UsersRound, Wrench, type LucideIcon,
 } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import { fetchRun, type Run, type RunParams, type User, type World } from './api'
 import { UserBadge } from './Auth'
-import { Kpi, fmt, money } from './ui'
+import { Docs, Help } from './Guide'
+import { Hint, Kpi, Tip, fmt, money } from './ui'
 import Command from './tabs/Command'
 import Audience from './tabs/Audience'
 import Hypotheses from './tabs/Hypotheses'
@@ -22,7 +23,7 @@ import Runs from './lab/Runs'
 import Issues from './lab/Issues'
 import Fixes from './lab/Fixes'
 
-type TabId = 'command' | 'rules' | 'audience' | 'hypotheses' | 'pilots' | 'plan' | 'strategies' | 'privacy' | 'logs'
+type TabId = 'command' | 'rules' | 'audience' | 'hypotheses' | 'pilots' | 'plan' | 'strategies' | 'privacy' | 'logs' | 'docs'
   | 'versions' | 'compare' | 'runs' | 'issues' | 'fixes'
 // step — место экрана в конвейере агента: аудитория → гипотезы → пилоты → план; lab — экраны лаборатории версий
 const TABS: {
@@ -38,6 +39,7 @@ const TABS: {
   { id: 'strategies', label: 'Стратегии', sub: 'Эксперты и ablation', icon: Swords },
   { id: 'privacy', label: 'Privacy', sub: 'Что видит LLM', icon: ShieldCheck, count: (r) => r.llm_audit.length },
   { id: 'logs', label: 'Логи', sub: 'Сырой лог агента', icon: ScrollText },
+  { id: 'docs', label: 'Документация', sub: 'Как всё устроено', icon: BookOpen },
   { id: 'versions', lab: true, label: 'Версии', sub: 'Lineage и карточки', icon: GitBranch, labCount: (l) => l.versions.length },
   { id: 'compare', lab: true, label: 'Сравнение', sub: '2–3 версии рядом', icon: GitCompare },
   { id: 'runs', lab: true, label: 'Прогоны', sub: 'Все запуски матрицы', icon: History },
@@ -89,7 +91,7 @@ export default function App({ user, onSignOut }: { user: User; onSignOut: () => 
                   Лаборатория{labState.busy && <LoaderCircle className="size-3 animate-spin" aria-label="идут тесты" />}
                 </span>
               )}
-              <button type="button" onClick={() => setTab(t.id)} aria-current={active ? 'page' : undefined}
+              <button type="button" onClick={() => setTab(t.id)} aria-current={active ? 'page' : undefined} title={t.sub}
                 className={`group flex shrink-0 cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors duration-150
                   focus-visible:outline-2 focus-visible:outline-focus
                   ${active ? 'bg-accent-soft' : 'hover:bg-default'}`}>
@@ -109,8 +111,9 @@ export default function App({ user, onSignOut }: { user: User; onSignOut: () => 
             )
           })}
         </nav>
-        <div className="flex justify-end border-t border-border px-4 py-2 lg:justify-start">
+        <div className="flex items-center justify-end gap-1 border-t border-border px-4 py-2 lg:justify-between">
           <UserBadge user={user} onSignOut={onSignOut} />
+          <Help role={user.role} onDocs={() => setTab('docs')} />
         </div>
       </aside>
 
@@ -118,11 +121,11 @@ export default function App({ user, onSignOut }: { user: User; onSignOut: () => 
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
             <p className="text-xs font-medium tracking-wide text-muted uppercase">
-              {current.lab ? 'Лаборатория версий' : current.step ? `Шаг ${current.step} из 4` : 'Обзор'}
+              {current.lab ? 'Лаборатория версий' : current.step ? `Шаг ${current.step} из 4` : tab === 'docs' ? 'Справка' : 'Обзор'}
             </p>
             <h1 className="text-2xl font-semibold tracking-tight">{current.label}</h1>
           </div>
-          {current.lab
+          {tab === 'docs' ? null : current.lab
             ? labState.busy && <span className="flex items-center gap-2 text-sm text-muted"><LoaderCircle className="size-4 animate-spin" aria-hidden />идут тесты · в очереди {labState.pending}</span>
             : <Controls params={params} setParams={setParams} loading={loading} llmAvailable={run?.params.llm_available ?? true}
                 models={run?.params.models ?? []} defaultModel={run?.params.model}
@@ -147,8 +150,9 @@ export default function App({ user, onSignOut }: { user: User; onSignOut: () => 
             {tab === 'fixes' && <Fixes s={labState} open={(id) => { labState.setSel(id); setTab('versions') }} />}
           </div>
         )}
-        {!current.lab && !run && !error && <LoadingState />}
-        {!current.lab && run && (
+        {tab === 'docs' && <div className="rise"><Docs role={user.role} tabs={tabs} onOpen={(id) => setTab(id as TabId)} /></div>}
+        {!current.lab && tab !== 'docs' && !run && !error && <LoadingState />}
+        {!current.lab && tab !== 'docs' && run && (
           <div key={tab + run.params.seed + run.params.world + run.params.llm + run.params.model}
             className={`rise flex flex-col gap-5 transition-opacity ${loading ? 'opacity-60' : ''}`}>
             {tab === 'command' && <><Summary run={run} /><Command run={run} /></>}
@@ -179,7 +183,9 @@ function Controls({ params, setParams, loading, llmAvailable, models, defaultMod
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-surface p-1.5 shadow-sm">
       <div className="flex h-10 items-center gap-2 rounded-xl bg-default pl-3">
-        <span className="text-xs font-medium text-muted">Seed</span>
+        <span className="flex items-center gap-1 text-xs font-medium text-muted">Seed
+          <Hint>Номер сценария. Тот же seed → тот же результат: удобно сравнивать настройки. Смените, чтобы проверить устойчивость.</Hint>
+        </span>
         <NumberField aria-label="Seed" className="w-36" minValue={0} value={params.seed}
           onChange={(v) => setParams({ ...params, seed: Number.isFinite(v) ? v : 0 })}>
           <NumberField.Group>
@@ -191,25 +197,34 @@ function Controls({ params, setParams, loading, llmAvailable, models, defaultMod
       </div>
       <ToggleButtonGroup aria-label="Мир" selectionMode="single" disallowEmptySelection
         selectedKeys={[params.world]} onSelectionChange={(k) => setParams({ ...params, world: [...k][0] as World })}>
-        <ToggleButton id="mock" className="h-10">Мок</ToggleButton>
-        <ToggleButton id="stress" className="h-10">Стресс-мир</ToggleButton>
+        <Tip tip="Учебный мир: эффекты совпадают с историей переходов. Для знакомства и демо">
+          <ToggleButton id="mock" className="h-10">Мок</ToggleButton>
+        </Tip>
+        <Tip tip="Эффекты искажены (× U(0.5, 2) + шум): история верна лишь частично. Проверка, что агент опирается на пилоты">
+          <ToggleButton id="stress" className="h-10">Стресс-мир</ToggleButton>
+        </Tip>
       </ToggleButtonGroup>
+      <Tip tip={llmAvailable ? 'Добавить гипотезы от языковой модели. В LLM уходят только агрегаты по ячейкам' : 'Ключ LLM не задан на сервере — агент работает на истории'}>
       <Switch isSelected={params.llm && llmAvailable} isDisabled={!llmAvailable}
         onChange={(llm) => setParams({ ...params, llm })}
         className="flex h-10 cursor-pointer flex-row items-center gap-2 rounded-xl bg-default px-3">
         <Switch.Control><Switch.Thumb /></Switch.Control>
         <span className="text-sm font-medium whitespace-nowrap">LLM-эксперт</span>
       </Switch>
+      </Tip>
       {/* ponytail: нативный datalist — пресеты первыми, любой slug OpenRouter вписывается руками */}
       <input aria-label="Модель LLM" list="llm-models" value={params.model} spellCheck={false}
+        title="Slug модели OpenRouter: выберите пресет или впишите свой. Пусто — модель по умолчанию"
         disabled={!params.llm || !llmAvailable} placeholder={defaultModel ?? 'модель по умолчанию'}
         onChange={(e) => setParams({ ...params, model: e.target.value.trim() })}
         className="num h-10 w-60 rounded-xl bg-default px-3 text-sm outline-none placeholder:text-muted
           focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-50" />
       <datalist id="llm-models">{models.map((m) => <option key={m} value={m} />)}</datalist>
-      <Button variant="primary" isPending={loading} onPress={onRun} className="h-10 px-4 font-semibold">
-        {!loading && <Play className="size-4" aria-hidden />}Запустить агента
-      </Button>
+      <Tip tip="Полный прогон: гипотезы → пилоты → план в выбранном мире. С LLM — до минуты">
+        <Button variant="primary" isPending={loading} onPress={onRun} className="h-10 px-4 font-semibold">
+          {!loading && <Play className="size-4" aria-hidden />}Запустить агента
+        </Button>
+      </Tip>
     </div>
   )
 }

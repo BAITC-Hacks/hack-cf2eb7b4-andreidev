@@ -2,7 +2,7 @@ import { Button, Card, Chip } from '@heroui/react'
 import { Bug, CircleCheck, Wand2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { lab, type Targets } from '../api'
-import { HowTo, SeverityChip, VersionStatusChip } from '../ui'
+import { HowTo, SeverityChip, Tip, VersionStatusChip } from '../ui'
 import type { LabState } from './useLab'
 
 export default function Issues({ s }: { s: LabState }) {
@@ -28,10 +28,12 @@ export default function Issues({ s }: { s: LabState }) {
         </select>
         {v && <VersionStatusChip s={v.status} />}
         {v && v.issues.length > 0 && (
-          <Button size="sm" variant="primary" className="ml-auto" isDisabled={v.status === 'evaluating' || s.pending > 0}
-            onPress={() => s.act(lab.remediate(v.id, 1))}>
-            <Wand2 className="size-3.5" aria-hidden />Исправить (1 шаг)
-          </Button>
+          <Tip tip="LLM или шаблон превратит эти issues в патч; новая версия пройдёт матрицу и gate">
+            <Button size="sm" variant="primary" className="ml-auto" isDisabled={v.status === 'evaluating' || s.pending > 0}
+              onPress={() => s.act(lab.remediate(v.id, 1))}>
+              <Wand2 className="size-3.5" aria-hidden />Исправить (1 шаг)
+            </Button>
+          </Tip>
         )}
       </div>
 
