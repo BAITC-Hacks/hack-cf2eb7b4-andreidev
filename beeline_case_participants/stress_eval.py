@@ -3,10 +3,12 @@
 
     python stress_eval.py [--runs 10]
 
-Сравнивает наш агент с шаблоном, prior-only (без пилотов) и оракулом (знает эффекты).
+Сравнивает наш агент с шаблоном, prior-only (без пилотов), оракулом (знает эффекты)
+и ablation экспертов: только prior против full (prior + llm, если есть OPENAI_API_KEY).
 """
 
-import math
+import json
+import os
 import sys
 
 import numpy as np
@@ -35,6 +37,10 @@ def world(seed):
 class PriorOnly(agent.Agent):
     def _explore(self, env, cells, arms):
         pass
+
+
+class ExpPrior(agent.Agent):
+    experts = ("prior",)
 
 
 def make_oracle(model):
@@ -79,17 +85,59 @@ def check_never_empty():
     print(f"пессимистичный мир: {len(camps)} кампания(й), каналы {[c['channel'] for c in camps]}")
 
 
+def check_llm():
+    """LLM-эксперт: невалидные предложения отсеиваются, сбой API не ломает агента."""
+    env, _ = make_environment(profile, _mock_impact_model(history), dict_tariff, CHANNELS, TOTAL_BUDGET,
+                              MAX_TOTAL_CONTACTS, _mock_fallback, seed=0)
+    cur, seg = profile.groupby(["current_tariff", "arpu_segment"]).size().idxmax()
+    target = next(t for t in dict_tariff["tariff_plan_code"] if t != cur)
+    canned = json.dumps({"arms": [{"cur": cur, "seg": seg, "target": target, "expected": 9},
+                                  {"cur": cur, "seg": seg, "target": "tariff_404", "expected": 0.1},
+                                  {"cur": "x", "seg": seg, "target": target, "expected": 0.1}]})
+    orig, key = agent._llm_call, os.environ.get("OPENAI_API_KEY")
+    os.environ["OPENAI_API_KEY"] = "test"
+    try:
+        agent._llm_call = lambda prompt: canned
+        a = agent.Agent()
+        a.log = []
+        _, arms = a._arms(env)
+        llm = {k: v for k, v in arms.items() if "llm" in v["src"]}
+        assert list(llm) == [(cur, seg, target)], llm
+        arm = llm[(cur, seg, target)]
+        assert "prior" in arm["src"] or arm["mu"] == agent.LLM_CLIP, arm  # expected=9 клипуется; prior главнее
+
+        def boom(prompt):
+            raise OSError("API down")
+        agent._llm_call = boom
+        env, _ = make_environment(profile, _mock_impact_model(history), dict_tariff, CHANNELS, TOTAL_BUDGET,
+                                  MAX_TOTAL_CONTACTS, _mock_fallback, seed=0)
+        a = agent.Agent()
+        camps = sanitize_campaigns(a.act(env), env.tariffs)
+        assert 1 <= len(camps) <= 10 and any("llm skipped" in l for l in a.log), a.log
+    finally:
+        agent._llm_call = orig
+        if key is None:
+            del os.environ["OPENAI_API_KEY"]
+        else:
+            os.environ["OPENAI_API_KEY"] = key
+    print("llm: невалидные предложения отсеяны, сбой API → план без LLM")
+
+
 if __name__ == "__main__":
     check_never_empty()
+    check_llm()
+    if not os.environ.get("OPENAI_API_KEY"):
+        print("нет OPENAI_API_KEY: agent (full) = exp_prior")
     runs = int(sys.argv[sys.argv.index("--runs") + 1]) if "--runs" in sys.argv else 10
     rows = []
     for seed in range(runs):
         model = world(seed)
         row = {"agent": run(agent.Agent, model, seed), "template": run(agent_template.Agent, model, seed),
-               "prior_only": run(PriorOnly, model, seed), "oracle": run(make_oracle(model), model, seed)}
+               "prior_only": run(PriorOnly, model, seed), "oracle": run(make_oracle(model), model, seed),
+               "exp_prior": run(ExpPrior, model, seed)}
         rows.append(row)
         print(f"seed {seed:2}: " + "  ".join(f"{k}={v:>12,.0f}" for k, v in row.items()))
     df = pd.DataFrame(rows)
-    print("\nмедиана:\n" + df.median().map("{:,.0f}".format).to_string())
+    print("\n" + df.agg(["median", "min"]).T.map("{:,.0f}".format).to_string())
     print(f"agent > 0: {(df.agent > 0).sum()}/{runs}   agent/oracle: {df.agent.median() / df.oracle.median():.2f}")
     assert (df.agent > 0).all() and df.agent.median() > df.template.median(), "агент не лучше шаблона / уходит в минус"
