@@ -15,3 +15,6 @@ __pycache__/
 .env
 /lab/
 /uploads/
+desktop/src-tauri/target/
+desktop/src-tauri/sidecar/
+desktop/src-tauri/gen/

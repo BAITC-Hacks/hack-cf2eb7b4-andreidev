@@ -666,6 +666,8 @@ def promote(vid):
     v = load(vid)
     if v["status"] != "candidate":
         raise ValueError(f"promote только из candidate, сейчас {v['status']}")
+    if getattr(sys, "frozen", False):
+        raise ValueError("promote недоступен в десктоп-версии: agent.py внутри приложения только для чтения")
     path = ROOT / "agent.py"
     text = set_constants(path.read_text(), v["config"])
     assert read_constants(text) == v["config"], "константы не записались"

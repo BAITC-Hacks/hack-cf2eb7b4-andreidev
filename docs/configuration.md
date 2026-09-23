@@ -10,12 +10,13 @@
 | `OPENAI_BASE_URL` | агент | `https://api.openai.com/v1` | OpenAI-совместимый endpoint |
 | `OPENROUTER_API_KEY` | агент | — | если задан, LLM идёт через OpenRouter (приоритет над OpenAI) |
 | `LLM_MODEL` | агент | `openai/gpt-4o-mini` | модель OpenRouter |
-| `DATABASE_URL` | UI | `postgresql://cockpit:cockpit@localhost:5432/cockpit` | Postgres |
+| `DATABASE_URL` | UI | `postgresql://cockpit:cockpit@localhost:5432/cockpit` | Postgres; `sqlite:///путь.db` — SQLite (так работает [десктоп](desktop.md)) |
 | `DB_SCHEMA` | UI | `public` | схема БД (разводит стенды) |
 | `AUTH_USERS` | UI | — | `email:пароль:роль,...`, заводятся при пустой таблице |
 | `AUTH_DEMO` | UI | `1` в docker compose | `1` — без `AUTH_USERS` завести демо-пользователей; иначе сервер не стартует на пустой таблице |
 | `AUTH_SECRET` | UI | `dev-secret-change-me` | секрет сессий; на стенде задайте свой |
 | `UPLOAD_DIR` | UI | `uploads/` | куда кладутся загруженные выгрузки (в docker — volume) |
+| `ENV_FILE` | UI | `.env` в корне репо | откуда `server.py` читает `.env` (десктоп — каталог данных приложения) |
 | `ENV_FILE` | UI | `.env` рядом с `server.py` | откуда `server.py` читает переменные |
 | `LAB_QUICK` | лаборатория | — | `1` — быстрая матрица тестов (для self-check) |
 

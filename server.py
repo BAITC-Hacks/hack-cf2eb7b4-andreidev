@@ -25,7 +25,7 @@ from fastapi import Body, Depends, FastAPI, File, HTTPException, Path as PathPar
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-_env_file = Path(__file__).parent / ".env"
+_env_file = Path(os.environ.get("ENV_FILE", Path(__file__).parent / ".env"))  # десктоп: .env в каталоге данных
 if _env_file.exists():  # ponytail: без python-dotenv, формат KEY=VALUE
     for line in _env_file.read_text().splitlines():
         k, _, v = line.partition("=")

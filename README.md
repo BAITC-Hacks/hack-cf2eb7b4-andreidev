@@ -18,7 +18,7 @@
    python local_eval.py --runs 10    # устойчивость: все 10 прогонов в плюс
    python make_submission.py         # пересобирает submission.csv; должен совпасть с закоммиченным (git diff пуст)
    ```
-4. **UI (по желанию):** см. «Сборка и запуск UI» ниже.
+4. **UI (по желанию):** см. «Сборка и запуск UI» ниже. Есть и офлайн-приложение для macOS и Windows — «Десктоп-приложение».
 
 LLM-ключ не обязателен: без него LLM-эксперт выключается, и агент работает на истории и пилотах. Ключи и прочие настройки кладутся в `.env` в корне репо (см. [docs/configuration.md](docs/configuration.md)):
 ```bash
@@ -50,6 +50,14 @@ AUTH_DEMO=1 uvicorn server:app --port 8000        # http://localhost:8000
 ```
 
 Swagger: http://localhost:8000/api/docs. Self-check'и и тесты — [docs/testing.md](docs/testing.md).
+
+## Десктоп-приложение (macOS и Windows)
+Кокпит собирается в офлайн-приложение на Tauri: без Docker, Postgres и Python у пользователя. Внутри лежат сервер (PyInstaller), фронт, агент и данные, хранилище — SQLite. Можно собрать версии и для **macOS** (`.dmg`, Apple Silicon), и для **Windows** (`.exe`-установщик и `.msi`).
+
+```bash
+bash desktop/build.sh     # на маке → desktop/src-tauri/target/release/bundle/dmg/*.dmg; на Windows (Git Bash) → bundle/nsis/*.exe, bundle/msi/*.msi
+```
+Нужны Python 3.13, Node 22, Rust и пакет организаторов в корне. Обе версии разом собирает GitHub Actions: Actions → **desktop** → Run workflow (или тег `v*`), установщики лежат в артефактах прогона. Вход — те же демо-пользователи. Каталог данных, `.env` для LLM-ключа и ограничения описаны в [docs/desktop.md](docs/desktop.md): promote лаборатории и CatBoost в десктопе недоступны, сборка не подписана.
 
 ## Вход
 При пустой таблице пользователей и `AUTH_DEMO=1` (по умолчанию в `docker compose`) заводятся демо-пользователи, пароль равен роли:
@@ -90,7 +98,7 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 - **LLM:** OpenAI-совместимый API — OpenRouter (по умолчанию `openai/gpt-4o-mini`) или OpenAI (`gpt-4o-mini`).
 - **Бэкенд UI:** FastAPI, Uvicorn, fastapi-users (SQLAlchemy), psycopg, PostgreSQL 17.
 - **Фронтенд:** React 19, HeroUI v3, Vite 8, TypeScript.
-- **Запуск:** Docker, Docker Compose.
+- **Запуск:** Docker, Docker Compose; десктоп — Tauri v2 (Rust) + PyInstaller, SQLite вместо Postgres.
 
 ## Документация
 | Документ | О чём |
@@ -103,6 +111,7 @@ web/ (React) ──/api──▶ server.py (FastAPI) ──▶ agent.py в мо�
 | [Campaign Cockpit](docs/cockpit.md) | экраны, роли и доступ к API, Swagger, хранилище |
 | [Новые данные](docs/data.md) | база знаний, CSV итогов кампаний, базовые выгрузки |
 | [Лаборатория версий](docs/lab.md) | матрица тестов, детекторы, ремедиация, gate, promote, privacy gateway |
+| [Десктоп-приложение](docs/desktop.md) | сборка под macOS и Windows, GitHub Actions, каталог данных, ограничения |
 | [Безопасность](SECURITY.md) | защита API и UI, чек-лист выкладки |
 
 ## Сторонние компоненты

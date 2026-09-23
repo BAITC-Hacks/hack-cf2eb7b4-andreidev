@@ -13,14 +13,18 @@ from pathlib import Path
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTableUUID
-from sqlalchemy import CheckConstraint, DateTime, Float, Integer, String, Text, create_engine, func, text
-from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy import JSON, CheckConstraint, DateTime, Float, Integer, String, Text, create_engine, func, text
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 ROLES = ("manager", "analyst", "admin")
 URL = os.environ.get("DATABASE_URL", "postgresql://cockpit:cockpit@localhost:5432/cockpit").replace(
     "postgresql://", "postgresql+psycopg://", 1)
+SQLITE = URL.startswith("sqlite")  # десктоп-сборка: один файл, без схем
+ASYNC_URL = URL.replace("sqlite://", "sqlite+aiosqlite://", 1) if SQLITE else URL
+insert = (sqlite if SQLITE else postgresql).insert  # on_conflict_* у обоих диалектов одинаковый
+JSONB = JSON().with_variant(postgresql.JSONB(), "postgresql")
 
 
 def _clean(o):  # JSONB не принимает NaN/inf — в файлах они жили, в БД становятся null
@@ -105,9 +109,10 @@ def use_schema(schema):
     global SCHEMA, engine, async_engine, async_session
     assert re.fullmatch(r"\w+", schema), schema
     os.environ["DB_SCHEMA"] = SCHEMA = schema
-    kw = {"connect_args": {"options": f"-c search_path={schema}"}, "pool_pre_ping": True, "json_serializer": _dumps}
+    kw = {"connect_args": {"timeout": 30, "check_same_thread": False} if SQLITE else {"options": f"-c search_path={schema}"},
+          "pool_pre_ping": True, "json_serializer": _dumps}
     engine = create_engine(URL, **kw)
-    async_engine = create_async_engine(URL, **kw)
+    async_engine = create_async_engine(ASYNC_URL, **kw)
     async_session = async_sessionmaker(async_engine, expire_on_commit=False)
 
 
@@ -116,12 +121,15 @@ use_schema(os.environ.get("DB_SCHEMA", "public"))
 
 def init():
     # ponytail: create_all без миграций; Alembic, когда схема начнёт меняться на живых данных
-    with engine.begin() as c:
-        c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+    if not SQLITE:
+        with engine.begin() as c:
+            c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
     Base.metadata.create_all(engine)
 
 
 def drop_schema():
+    if SQLITE:
+        return Base.metadata.drop_all(engine)
     with engine.begin() as c:
         c.execute(text(f'DROP SCHEMA IF EXISTS "{SCHEMA}" CASCADE'))
 

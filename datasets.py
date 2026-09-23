@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 import agent
@@ -132,7 +131,7 @@ def save_feedback(rows, user):
     if not rows:
         return 0
     with Session(db.engine) as s, s.begin():
-        res = s.execute(insert(db.CampaignResult).values([{**r, "created_by": user} for r in rows])
+        res = s.execute(db.insert(db.CampaignResult).values([{**r, "created_by": user} for r in rows])
                         .on_conflict_do_nothing(index_elements=["key"]).returning(db.CampaignResult.key))
         return len(res.all())  # rowcount у multi-values insert в psycopg = -1
 

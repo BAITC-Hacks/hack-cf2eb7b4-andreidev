@@ -1,0 +1,34 @@
+name: desktop
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]  # macos-latest = arm64; Intel — добавить macos-13
+    runs-on: ${{ matrix.os }}
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop/src-tauri }
+      # пакет организаторов в git не коммитим — лежит архивом в релизе participant-pkg этого репо
+      - run: gh release download participant-pkg -p participant-pkg.tar.gz && tar xzf participant-pkg.tar.gz && rm participant-pkg.tar.gz
+        env: { GH_TOKEN: "${{ github.token }}" }
+      - run: bash desktop/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: campaign-cockpit-${{ runner.os }}
+          path: |
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/nsis/*.exe
+            desktop/src-tauri/target/release/bundle/msi/*.msi
